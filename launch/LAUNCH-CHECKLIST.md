@@ -17,7 +17,7 @@ Proposed names (checked 12 Nov 2026 with `npm view`: `lake-gate` returned 404, s
 4. `npm login`, then `npm publish --access public` from the repo root. Check with `npx lake-gate@latest help` in an empty folder.
 5. Dogfood once on a real private test repo with two GitHub users: author and approver. Open a plan PR, comment `/lake approve`, and check that the status turns green and that editing the plan turns it red. The Action has been tested only against a mocked GitHub API so far, so this is the one real check before announcing.
 6. Landing:
-   - In `landing/index.html`, replace `GITHUB_URL` (5 places, one is GITHUB_URL/issues).
+   - In `landing/index.html`, replace `GITHUB_URL` (4 places, one is GITHUB_URL/issues).
    - In `landing/site.js`, replace `GOATCOUNTER_CODE`.
    - Host for free on GitHub Pages: repo Settings → Pages → deploy from the `/landing` folder via a small Pages workflow, or a separate `lake-gate-site` repo. A custom domain is optional and costs money, so it needs separate approval.
 7. Post the drafts in `launch/posts.md`, in this order: Show HN (needs an HN account, since there's no Lake one yet), then r/ClaudeCode from u/LakeResearchTeam, then X/LinkedIn if Lake accounts exist.
