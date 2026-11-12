@@ -1,0 +1,21 @@
+name: Lake plan gate
+description: Version-bound team approval for AI coding agent plans. Sets the lake/plan-approval commit status.
+author: Lake
+branding:
+  icon: check-circle
+  color: green
+inputs:
+  token:
+    description: GitHub token with statuses:write and issues:write (the default GITHUB_TOKEN works).
+    required: false
+    default: ${{ github.token }}
+  comment:
+    description: Post and update one summary comment on the PR.
+    required: false
+    default: 'true'
+outputs:
+  state:
+    description: success or failure
+runs:
+  using: node24
+  main: src/action.js

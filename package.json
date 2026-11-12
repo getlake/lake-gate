@@ -1,0 +1,18 @@
+{
+  "name": "lake-gate",
+  "version": "0.1.0",
+  "description": "Version-bound team plan approval for AI coding agents. Claude Code hook + GitHub Action. No backend, no telemetry.",
+  "type": "module",
+  "bin": { "lake-gate": "bin/lake-gate.js" },
+  "main": "src/index.js",
+  "exports": { ".": "./src/index.js" },
+  "files": ["bin", "src", "templates", "action.yml", "README.md", "LICENSE"],
+  "engines": { "node": ">=18.17" },
+  "scripts": { "test": "node --test test/*.test.js" },
+  "keywords": ["claude-code", "hooks", "ai-agents", "plan-review", "github-action", "approval", "cursor", "codex", "cost"],
+  "license": "MIT",
+  "author": "Lake research team",
+  "repository": { "type": "git", "url": "git+https://github.com/lakeresearch/lake-gate.git" },
+  "homepage": "https://github.com/lakeresearch/lake-gate#readme",
+  "bugs": { "url": "https://github.com/lakeresearch/lake-gate/issues" }
+}

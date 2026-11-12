@@ -1,0 +1,73 @@
+$ npx lake-gate init
+wrote  .lake/config.json
+wrote  .lake/plans/README.md
+wrote  .github/workflows/lake-gate.yml
+merged .claude/settings.json (PreToolUse hook)
+
+Next:
+  1. git add .lake .claude .github && git commit -m "Add lake-gate"
+  2. In GitHub branch protection, require the status check "lake/plan-approval".
+  3. Optional: npm i -D lake-gate (faster hook than npx).
+
+--- agent tries to write code before any plan
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Lake: no plan for this work yet. Write a short plan first (Claude Code plan mode, then exit plan mode) or export one with `npx lake-gate plan <file.md>`. Implementation is gated until the plan is approved by a teammate."}}
+
+--- Claude exits plan mode (plan injected by Claude Code)
+{"systemMessage":"Lake: plan saved to .lake/plans/add-webhook-retries.md (version 86eab4d0, high complexity, est. $2.91–$9.71). Implementation is gated until a teammate approves this version."}
+
+--- agent tries to write code, plan not approved
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Lake: plan \"add-webhook-retries\" version 86eab4d0 blocks implementation because it is not approved yet. Do not work around this gate; stop and tell the user.\nCommit .lake/plans/add-webhook-retries.md, push and open a PR. A teammate (not you) comments:\n  /lake approve add-webhook-retries@86eab4d0\nThen run: npx lake-gate sync"}}
+
+--- read-only Bash is fine
+
+(no output = no objection)
+
+$ npx lake-gate status
+* add-webhook-retries  v86eab4d0  high  est. $2.91–$9.71  pending
+  approve on the PR: /lake approve add-webhook-retries@86eab4d0
+
+--- simulate GitHub: author self-approves, then teammate @noah approves v86eab4d0
+  add-webhook-retries  v86eab4d0  high  est. $2.91–$9.71  approved by @noah
+--- agent writes code now
+
+(no output = allowed, normal Claude Code permissions apply)
+
+--- someone edits the plan after approval
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Lake: plan \"add-webhook-retries\" version 4768e13f blocks implementation because the plan was edited after it was approved, so the approval no longer applies. Do not work around this gate; stop and tell the user.\nCommit .lake/plans/add-webhook-retries.md, push and open a PR. A teammate (not you) comments:\n  /lake approve add-webhook-retries@4768e13f\nThen run: npx lake-gate sync"}}
+
+
+$ npx lake-gate check  (pre-run check for Cursor/Codex scripts)
+add-webhook-retries  v4768e13f  high  est. $2.91–$9.71  pending (approval is for an older version)
+  approve on the PR: /lake approve add-webhook-retries@4768e13f
+exit 1
+
+--- generated plan file
+---
+id: add-webhook-retries
+title: "Add webhook retries"
+author: maya@example.com
+source: claude-code
+created: 2026-11-12T07:44:17.562Z
+---
+# Add webhook retries
+
+1. Add a bounded retry queue with backoff and jitter in src/webhooks/queue.ts
+2. Database migration: retry_count column, reuse the idempotency record
+3. Fix typo in README
+4. Add replay and failure tests
+
+<!-- lake:estimate:start (generated, not part of the approved digest) -->
+## Lake estimate
+
+Overall complexity: **high** · Estimated cost with the recommended model per step: **$2.91–$9.71** (all steps on Claude Opus 5.5: $3.95–$13)
+
+| # | Step | Complexity | Recommended model | Est. cost |
+|---|---|---|---|---|
+| 1 | Add a bounded retry queue with backoff and jitter in src/webhooks/queue.ts | medium | Claude Sonnet 5.5 | $0.42–$1.25 |
+| 2 | Database migration: retry_count column, reuse the idempotency record | high | Claude Opus 5.5 | $2.04–$7.09 |
+| 3 | Fix typo in README | low | Claude Haiku 5.5 | $0.032–$0.11 |
+| 4 | Add replay and failure tests | medium | Claude Sonnet 5.5 | $0.42–$1.25 |
+
+Rough forecast from keyword heuristics and API list prices as of 2026-11-12, assuming 70% cache hits. Not a quote, not a cap. Subscription plans spend quota, not these dollars.
+Auto-approve policy (shadow): needs a human (upper estimate $9.71 > $1.50; 4 steps > 3; complexity high > low).
+<!-- lake:estimate:end -->
