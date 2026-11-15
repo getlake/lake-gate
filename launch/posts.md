@@ -1,6 +1,6 @@
 # lake-gate launch posts (ready to paste, DRAFTS: nothing has been posted)
 
-Replace `GITHUB_URL` and `SITE_URL` before posting. No founder name; the voice is "we" (the Lake team).
+URLs already point to https://github.com/getlake/lake-gate and https://getlake.github.io/lake-gate. No founder name; the voice is "we" (the Lake team). These are drafts only; nothing has been posted.
 
 ---
 
@@ -9,7 +9,7 @@ Replace `GITHUB_URL` and `SITE_URL` before posting. No founder name; the voice i
 **Title** (80 char max):
 Show HN: Lake-gate – coding agents wait until a teammate approves the exact plan
 
-**URL:** GITHUB_URL
+**URL:** https://github.com/getlake/lake-gate
 
 **First comment:**
 
@@ -53,7 +53,7 @@ Setup is `npx lake-gate init`, then make the check required. There's no server, 
 
 Honest limits: it's a guardrail, not a security boundary. It gates the start of a run, not the run itself. The cost numbers are heuristic ranges.
 
-Repo: GITHUB_URL
+Repo: https://github.com/getlake/lake-gate
 
 What would make you keep it on, and what would make you rip it out?
 
@@ -66,7 +66,7 @@ Pre-run plan approval for Cursor/Codex teams: plan in the repo, teammate approve
 
 **Body:**
 
-Built for teams where one person's agent run can burn a day or a budget. Save the agent's plan as markdown and run `npx lake-gate plan plan.md`. It lands in `.lake/plans/` with per-step model recommendations and a cost range. A teammate approves on the PR with `/lake approve id@version`, and `npx lake-gate check` exits non-zero until that exact version is approved, so you can put it in front of any agent command. On Claude Code it's enforced by a hook; on Cursor it's a pre-run check for now. Free, MIT, no telemetry. GITHUB_URL
+Built for teams where one person's agent run can burn a day or a budget. Save the agent's plan as markdown and run `npx lake-gate plan plan.md`. It lands in `.lake/plans/` with per-step model recommendations and a cost range. A teammate approves on the PR with `/lake approve id@version`, and `npx lake-gate check` exits non-zero until that exact version is approved, so you can put it in front of any agent command. On Claude Code it's enforced by a hook; on Cursor it's a pre-run check for now. Free, MIT, no telemetry. https://github.com/getlake/lake-gate
 
 ---
 
@@ -74,7 +74,7 @@ Built for teams where one person's agent run can burn a day or a budget. Save th
 
 1/ Plan mode is solo. Shipping is a team sport.
 
-We open-sourced lake-gate: your coding agent waits for a real yes from a teammate, for that exact version of the plan. GITHUB_URL
+We open-sourced lake-gate: your coding agent waits for a real yes from a teammate, for that exact version of the plan. https://github.com/getlake/lake-gate
 
 2/ When Claude Code leaves plan mode, the plan lands in your repo with a version hash. Every step gets a complexity rating, a recommended model and a cost range.
 
@@ -82,7 +82,7 @@ We open-sourced lake-gate: your coding agent waits for a real yes from a teammat
 
 4/ The GitHub check `lake/plan-approval` keeps unapproved plans out of main. Small, cheap plans can auto-approve (shadow mode first).
 
-5/ `npx lake-gate init`. Zero dependencies, no server, no telemetry, MIT. Looking for a few teams of 2–10 to try it: SITE_URL
+5/ `npx lake-gate init`. Zero dependencies, no server, no telemetry, MIT. Looking for a few teams of 2–10 to try it: https://getlake.github.io/lake-gate
 
 ---
 
@@ -92,13 +92,13 @@ Your coding agent should wait for a real yes.
 
 We just open-sourced lake-gate for teams that build with Claude Code, Cursor and Codex. The agent's plan goes into the repo with a cost estimate per step. Implementation is blocked until a teammate approves that exact version, and editing the plan resets the approval. A GitHub check keeps unapproved plans from merging.
 
-Free, MIT, no telemetry. We're looking for a few design-partner teams: SITE_URL
+Free, MIT, no telemetry. We're looking for a few design-partner teams: https://getlake.github.io/lake-gate
 
 ---
 
 ## 6. Listing PRs (awesome lists): one-line entry
 
-- [lake-gate](GITHUB_URL) - PreToolUse hook + GitHub Action: saves the plan to the repo with per-step model/cost estimates, blocks edits until a non-author teammate approves the exact plan version on the PR.
+- [lake-gate](https://github.com/getlake/lake-gate) - PreToolUse hook + GitHub Action: saves the plan to the repo with per-step model/cost estimates, blocks edits until a non-author teammate approves the exact plan version on the PR.
 
 Candidate lists (verify each list's contribution rules first): awesome-claude-code (hooks section), awesome lists for GitHub Actions, the GitHub Marketplace listing of the Action itself.
 

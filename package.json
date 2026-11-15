@@ -12,7 +12,7 @@
   "keywords": ["claude-code", "hooks", "ai-agents", "plan-review", "github-action", "approval", "cursor", "codex", "cost"],
   "license": "MIT",
   "author": "Lake research team",
-  "repository": { "type": "git", "url": "git+https://github.com/lakeresearch/lake-gate.git" },
-  "homepage": "https://github.com/lakeresearch/lake-gate#readme",
-  "bugs": { "url": "https://github.com/lakeresearch/lake-gate/issues" }
+  "repository": { "type": "git", "url": "git+https://github.com/getlake/lake-gate.git" },
+  "homepage": "https://github.com/getlake/lake-gate#readme",
+  "bugs": { "url": "https://github.com/getlake/lake-gate/issues" }
 }

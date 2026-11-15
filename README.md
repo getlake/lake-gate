@@ -19,6 +19,14 @@ npm i -D lake-gate          # optional for JS repos: faster hook than npx
 git add .lake .claude .github && git commit -m "Add lake-gate" && git push
 ```
 
+If the npm package is not available yet, install from GitHub first:
+
+```bash
+npm i -g github:getlake/lake-gate
+# then in your repo:
+lake-gate init
+```
+
 Then in GitHub: **Settings → Branches → branch protection → Require status checks → `lake/plan-approval`** (the check appears after the first PR runs).
 
 Requirements: Node 18.17+, git, a GitHub repo. macOS/Linux shells for the hook (Windows: use WSL for now).

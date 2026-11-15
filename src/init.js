@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_CONFIG } from './config.js';
 
-export const ACTION_REF = 'lakeresearch/lake-gate@v0';
+export const ACTION_REF = 'getlake/lake-gate@v0';
 const TEMPLATES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'templates');
 
 export const HOOK_COMMAND = 'if [ -x "$CLAUDE_PROJECT_DIR/node_modules/.bin/lake-gate" ]; then exec "$CLAUDE_PROJECT_DIR/node_modules/.bin/lake-gate" hook claude; elif command -v lake-gate >/dev/null 2>&1; then exec lake-gate hook claude; else exec npx -y lake-gate@0 hook claude; fi';

@@ -1,6 +1,6 @@
-// Visit counting: GoatCounter (free, cookieless, no personal data). Set your site code below; until then nothing loads.
-const GOATCOUNTER_CODE = 'GOATCOUNTER_CODE';
-if (!/^GOATCOUNTER_/.test(GOATCOUNTER_CODE) && !/^(localhost|127\.)/.test(location.hostname)) {
+// Visit counting: GoatCounter (free, cookieless, no personal data). Loads only when the site code is set, and never on localhost.
+const GOATCOUNTER_CODE = 'lakehq';
+if (GOATCOUNTER_CODE && !/^(localhost|127\.)/.test(location.hostname)) {
   const s = document.createElement('script');
   s.async = true; s.src = 'https://gc.zgo.at/count.js';
   s.dataset.goatcounter = `https://${GOATCOUNTER_CODE}.goatcounter.com/count`;

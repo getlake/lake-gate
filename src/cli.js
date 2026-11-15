@@ -18,7 +18,7 @@ Usage:
   lake-gate use <id>                                       Set the active plan (human only; the hook blocks agents)
   lake-gate hook claude                                    Claude Code PreToolUse hook (reads JSON on stdin)
 
-No telemetry. No backend. Docs: https://github.com/lakeresearch/lake-gate`;
+No telemetry. No backend. Docs: https://github.com/getlake/lake-gate`;
 
 const flag = (args, name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 const readInput = (f) => (f === '-' || !f ? fs.readFileSync(0, 'utf8') : fs.readFileSync(f, 'utf8'));
