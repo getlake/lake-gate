@@ -9,17 +9,22 @@ on:
     types: [submitted, edited, dismissed]
   issue_comment:
     types: [created, edited, deleted]
+  check_run: # only used when "checkButtons": true in .lake/config.json (experimental)
+    types: [requested_action]
 permissions:
   contents: read
   pull-requests: read
   issues: write
   statuses: write
+  checks: write
 concurrency:
   group: lake-gate-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: false
 jobs:
   plan-gate:
-    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && contains(github.event.comment.body, '/lake'))
+    if: >-
+      (github.event_name != 'issue_comment' || (github.event.issue.pull_request && contains(github.event.comment.body, '/lake'))) &&
+      (github.event_name != 'check_run' || github.event.check_run.name == 'Lake plan review')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

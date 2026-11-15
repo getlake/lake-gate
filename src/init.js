@@ -18,6 +18,15 @@ export function mergeClaudeSettings(settings) {
   return { settings: s, changed: !already };
 }
 
+export const MCP_SERVER = { command: 'npx', args: ['-y', 'lake-gate@0', 'mcp'] };
+export function mergeMcpConfig(cfg) {
+  const c = cfg && typeof cfg === 'object' ? structuredClone(cfg) : {};
+  c.mcpServers = c.mcpServers || {};
+  if (c.mcpServers['lake-gate']) return { config: c, changed: false };
+  c.mcpServers['lake-gate'] = MCP_SERVER;
+  return { config: c, changed: true };
+}
+
 export function init(root, { actionRef = ACTION_REF, force = false } = {}) {
   const done = [];
   const write = (rel, content, overwrite = force) => {
@@ -38,5 +47,15 @@ export function init(root, { actionRef = ACTION_REF, force = false } = {}) {
   const { settings, changed } = mergeClaudeSettings(current);
   if (changed) { fs.mkdirSync(path.dirname(sp), { recursive: true }); fs.writeFileSync(sp, JSON.stringify(settings, null, 2) + '\n'); done.push('merged .claude/settings.json (PreToolUse hook)'); }
   else done.push('kept   .claude/settings.json (hook already present)');
+
+  // MCP server registration: Claude Code reads .mcp.json, Cursor reads .cursor/mcp.json
+  for (const rel of ['.mcp.json', path.join('.cursor', 'mcp.json')]) {
+    const p = path.join(root, rel);
+    let cur = {};
+    if (fs.existsSync(p)) { try { cur = JSON.parse(fs.readFileSync(p, 'utf8')); } catch { done.push(`kept   ${rel} (not valid JSON, add lake-gate by hand)`); continue; } }
+    const { config, changed: ch } = mergeMcpConfig(cur);
+    if (ch) { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, JSON.stringify(config, null, 2) + '\n'); done.push(`merged ${rel} (lake-gate MCP server)`); }
+    else done.push(`kept   ${rel} (lake-gate MCP already present)`);
+  }
   return done;
 }

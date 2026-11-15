@@ -1,0 +1,50 @@
+// Screenshots of the review UI (demo data). Needs playwright + Chrome; dev-only, not shipped.
+const { chromium } = require(process.env.PW || '/workspace/lake/landing-tools/node_modules/playwright');
+const BASE = process.env.BASE || 'http://127.0.0.1:4848/';
+const OUT = process.env.OUT || '/workspace/lake/exp-b-gate/ui-shots';
+(async () => {
+  const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+  const errors = [];
+  const only = process.env.ONLY ? process.env.ONLY.split(',') : null;
+  const run = async (width, height, name, fn, full = false) => {
+    if (only && !only.includes(name)) return;
+    const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 2, reducedMotion: 'reduce' });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
+    page.on('console', (m) => { if (m.type() === 'error') errors.push(`${name}: ${m.text()}`); });
+    await fn(page);
+    await page.waitForTimeout(350);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
+    if (overflow) errors.push(`${name}: horizontal overflow`);
+    await page.screenshot({ path: `${OUT}/${name}.png`, fullPage: full });
+    await ctx.close();
+  };
+  const open = (h) => async (page) => { await page.goto(BASE + h); await page.waitForSelector('main'); };
+  await run(1440, 1000, 'dashboard-1440', open('#/demo'), true);
+  await run(1440, 1000, 'plan-1440', open('#/demo/plan/add-webhook-retries~412'));
+  await run(1440, 1000, 'plan-full-1440', open('#/demo/plan/add-webhook-retries~412'), true);
+  await run(1440, 1000, 'comment-1440', async (page) => {
+    await open('#/demo/plan/add-webhook-retries~412')(page);
+    const li = page.locator('.li', { hasText: 'Emit' }).first(); await li.hover(); await li.locator('.add').click();
+    await page.fill('#ctext', 'Add a per-customer cap too, so one noisy endpoint cannot fill the queue.');
+    await page.locator('#composer').scrollIntoViewIfNeeded(); await page.evaluate(() => window.scrollBy(0, 120));
+  });
+  await run(1440, 1000, 'round1-1440', open('#/demo/plan/add-webhook-retries~412?round=1'));
+  await run(1440, 1000, 'rounds-1440', open('#/demo/plan/add-webhook-retries~412/rounds'), true);
+  await run(1440, 1000, 'diff-1440', open('#/demo/plan/add-webhook-retries~412/diff/2/3'), true);
+  await run(1440, 1000, 'activity-1440', open('#/demo/plan/add-webhook-retries~412/activity'), true);
+  await run(1440, 1000, 'approve-sheet-1440', async (page) => { await open('#/demo/plan/add-webhook-retries~412')(page); await page.keyboard.press('a'); await page.fill('#stext', 'Re-signing closes my concern. Ship it.'); });
+  await run(1440, 1000, 'approved-1440', async (page) => { await open('#/demo/plan/add-webhook-retries~412?do=approve&v=00000000')(page); await page.fill('#stext', 'Looks right.'); await page.keyboard.press('Control+Enter'); await page.waitForSelector('.done'); await page.waitForTimeout(1700); });
+  await run(1440, 1000, 'changes-sheet-1440', async (page) => { await open('#/demo/plan/usage-alerts~418')(page); await page.click('[data-act=changes]'); await page.fill('#stext', 'Use the hourly rollups instead of a nightly job so the 100% email is not a day late.'); });
+  await run(1440, 1000, 'team-activity-1440', open('#/demo/activity'), true);
+  await run(1440, 1000, 'connect-1440', open('#/connect'));
+  await run(1440, 1000, 'local-1440', open('#/local'));
+  await run(1440, 1000, 'help-1440', async (page) => { await open('#/demo')(page); await page.keyboard.press('?'); });
+  await run(390, 844, 'dashboard-390', open('#/demo'), true);
+  await run(390, 844, 'plan-390', open('#/demo/plan/add-webhook-retries~412'));
+  await run(390, 844, 'plan-full-390', open('#/demo/plan/add-webhook-retries~412'), true);
+  await run(390, 844, 'approve-sheet-390', async (page) => { await open('#/demo/plan/add-webhook-retries~412')(page); await page.click('.mbar [data-act=approve]'); });
+  await run(390, 844, 'diff-390', open('#/demo/plan/add-webhook-retries~412/diff/2/3'), true);
+  await browser.close();
+  console.log(errors.length ? `ERRORS:\n${errors.join('\n')}` : 'no page errors, no overflow');
+})();

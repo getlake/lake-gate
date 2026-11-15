@@ -33,6 +33,7 @@
     <a href="#how">How it works</a>
     <a href="#estimate">Estimates</a>
     <a href="#honest">Limits</a>
+    <a href="app/#/demo" data-track="nav-demo">Live demo</a>
     <a class="button compact ghost" href="https://github.com/getlake/lake-gate" data-track="nav-github"><svg><use href="#github"/></svg> GitHub</a>
   </nav>
 </header>
@@ -103,7 +104,7 @@
     <ol class="steps">
       <li><span class="n">01</span><svg><use href="#file"/></svg><h3>Plan lands in the repo</h3><p>When Claude Code leaves plan mode, a hook writes <code>.lake/plans/&lt;id&gt;.md</code> with a version hash. Cursor or Codex: <code>npx lake-gate plan plan.md</code>.</p></li>
       <li><span class="n">02</span><svg><use href="#lock"/></svg><h3>Implementation waits</h3><p>A <code>PreToolUse</code> hook denies edits and non-read-only shell commands. The agent can still read, search and explain.</p></li>
-      <li><span class="n">03</span><svg><use href="#review"/></svg><h3>A teammate says yes</h3><p>On the PR: <code>/lake approve id@version</code>. The author and bots don't count, and neither do read-only users.</p></li>
+      <li><span class="n">03</span><svg><use href="#review"/></svg><h3>A teammate says yes</h3><p>One click in the <a href="app/#/demo">Lake review app</a>, GitHub's own Approve button, or from the agent chat. Comments land on exact lines, round by round. The author and bots don't count, and neither do read-only users.</p></li>
       <li><span class="n">04</span><svg><use href="#branch"/></svg><h3>The check holds the line</h3><p>The Action sets <code>lake/plan-approval</code> on the PR. Edit the plan and it turns red until someone approves the new version.</p></li>
     </ol>
   </div>

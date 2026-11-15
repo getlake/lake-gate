@@ -1,4 +1,4 @@
-import crypto from 'node:crypto';
+import { sha256Hex } from './sha256.js';
 
 export const EST_START = '<!-- lake:estimate:start (generated, not part of the approved digest) -->';
 export const EST_END = '<!-- lake:estimate:end -->';
@@ -34,7 +34,7 @@ export function normalizeBody(body) {
 }
 
 export function digestOf(body) {
-  return crypto.createHash('sha256').update(normalizeBody(body)).digest('hex');
+  return sha256Hex(normalizeBody(body));
 }
 
 export function titleOf(body) {

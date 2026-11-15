@@ -5,6 +5,8 @@ import { estimatePlan, renderEstimate, range } from './estimate.js';
 import { handleClaudePreToolUse } from './hook.js';
 import { syncFromGitHub, applyEvents } from './sync.js';
 import { init, ACTION_REF } from './init.js';
+import { startUi } from './ui-server.js';
+import { serve as serveMcp } from './mcp.js';
 
 const HELP = `lake-gate: version-bound team approval for AI coding agent plans
 
@@ -17,6 +19,8 @@ Usage:
   lake-gate check [--plan id]                              Exit 0 if the active plan's current version is approved (pre-run check)
   lake-gate use <id>                                       Set the active plan (human only; the hook blocks agents)
   lake-gate hook claude                                    Claude Code PreToolUse hook (reads JSON on stdin)
+  lake-gate ui [--port 4848] [--no-open]                   Review UI on localhost: plans, inline comments, rounds, one-click approve
+  lake-gate mcp                                            MCP server (stdio) for Claude Code / Cursor: request review, wait, revise, approve
 
 No telemetry. No backend. Docs: https://github.com/getlake/lake-gate`;
 
@@ -89,6 +93,14 @@ export async function main(argv = process.argv.slice(2), io = { out: (s) => proc
       if (res) io.out(JSON.stringify(res));
       return 0;
     }
+    case 'ui': {
+      const r = await startUi({ root, port: Number(flag(args, '--port') || 4848), open: !args.includes('--no-open') });
+      io.out(`Lake review UI: ${r.url}`);
+      io.out(r.repo ? `Repo ${r.repo}. ${r.hasToken ? 'Posting as your GitHub login (token stays on this machine).' : 'No GitHub token found: read-only for public repos. Run `gh auth login` to post.'}` : 'No GitHub remote: showing local plans only.');
+      io.out('Ctrl+C to stop.');
+      return 0;
+    }
+    case 'mcp': { await serveMcp(); return 0; }
     case undefined: case 'help': case '--help': case '-h': io.out(HELP); return 0;
     case '--version': case '-v': io.out(JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url))).version); return 0;
     default: io.err(`Unknown command: ${cmd}\n\n${HELP}`); return 1;

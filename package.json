@@ -1,18 +1,50 @@
 {
   "name": "lake-gate",
   "version": "0.1.0",
-  "description": "Version-bound team plan approval for AI coding agents. Claude Code hook + GitHub Action. No backend, no telemetry.",
+  "description": "Version-bound team plan approval for AI coding agents: review UI, Claude Code hook, MCP server, GitHub Action. No backend, no telemetry.",
   "type": "module",
-  "bin": { "lake-gate": "bin/lake-gate.js" },
+  "bin": {
+    "lake-gate": "bin/lake-gate.js"
+  },
   "main": "src/index.js",
-  "exports": { ".": "./src/index.js" },
-  "files": ["bin", "src", "templates", "action.yml", "README.md", "LICENSE"],
-  "engines": { "node": ">=18.17" },
-  "scripts": { "test": "node --test test/*.test.js" },
-  "keywords": ["claude-code", "hooks", "ai-agents", "plan-review", "github-action", "approval", "cursor", "codex", "cost"],
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "ui",
+    "templates",
+    "action.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build:ui": "node scripts/build-ui.js"
+  },
+  "keywords": [
+    "claude-code",
+    "hooks",
+    "ai-agents",
+    "plan-review",
+    "github-action",
+    "approval",
+    "cursor",
+    "codex",
+    "cost"
+  ],
   "license": "MIT",
   "author": "Lake research team",
-  "repository": { "type": "git", "url": "git+https://github.com/getlake/lake-gate.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/getlake/lake-gate.git"
+  },
   "homepage": "https://github.com/getlake/lake-gate#readme",
-  "bugs": { "url": "https://github.com/getlake/lake-gate/issues" }
+  "bugs": {
+    "url": "https://github.com/getlake/lake-gate/issues"
+  }
 }

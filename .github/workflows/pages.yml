@@ -1,4 +1,4 @@
-# Publishes landing/ to GitHub Pages (free). Enable in repo Settings → Pages → Source: GitHub Actions.
+# Publishes landing/ (plus the review app at /app/) to GitHub Pages (free). Enable in repo Settings → Pages → Source: GitHub Actions.
 name: pages
 on:
   push:
@@ -19,6 +19,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Build the review app (landing/app)
+        run: node scripts/build-ui.js
       - name: Add .nojekyll
         run: touch landing/.nojekyll
       - uses: actions/upload-pages-artifact@v3
