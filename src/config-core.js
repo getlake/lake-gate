@@ -71,7 +71,21 @@ export function parseConfig(text, file = '.lake/config.json') {
   if (!isObj(data)) throw new ConfigError(`${file} must contain a JSON object ({ ... }).`);
   return merge(DEFAULT_CONFIG, data);
 }
-// Never throws: on a broken file, the defaults apply (the gate stays on) and `configError` says what to fix.
+// Never throws. A broken file never loosens the policy: callers first look for the last valid version
+// (git history); if there is none, this strict fallback applies: defaults with auto-approve OFF, marked
+// policyBroken so the PR check fails closed, and configError says what to fix (file, line, column).
+export const STRICT_FALLBACK = { ...DEFAULT_CONFIG, autoApprove: { ...DEFAULT_CONFIG.autoApprove, mode: 'off' } };
 export function safeParseConfig(text, file) {
-  try { return parseConfig(text, file); } catch (e) { if (!(e instanceof ConfigError)) throw e; return { ...DEFAULT_CONFIG, configError: e.message }; }
+  try { return parseConfig(text, file); } catch (e) { if (!(e instanceof ConfigError)) throw e; return { ...STRICT_FALLBACK, configError: e.message, policyBroken: true }; }
+}
+// A broken file plus the last valid version of it: keep that policy and say so.
+export function withLastValid(broken, lastText, from) {
+  if (!broken.configError || lastText == null) return broken;
+  try { return { ...parseConfig(lastText), configError: broken.configError, policyFrom: from }; } catch { return broken; }
+}
+// One line for humans (summary, hook, status, MCP).
+export function configWarning(c) {
+  if (!c?.configError) return null;
+  return c.policyFrom ? `${c.configError}. lake-gate keeps the last valid policy (${c.policyFrom}) until it's fixed.`
+    : `${c.configError}. No earlier valid version found, so lake-gate fails closed: nothing auto-approves and the PR check stays red until it's fixed.`;
 }

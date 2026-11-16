@@ -8,12 +8,12 @@
     "source": "github"
   },
   "websiteUrl": "https://getlake.github.io/lake-gate/",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "lake-gate",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "transport": { "type": "stdio" },
       "packageArguments": [{ "type": "positional", "value": "mcp" }]
     }

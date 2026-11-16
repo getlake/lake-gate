@@ -27,6 +27,19 @@ export function mergeMcpConfig(cfg) {
   return { config: c, changed: true };
 }
 
+// Upgrades an existing lake-gate workflow in place (keeps your edits): adds the push trigger that re-checks
+// open PRs when .lake/config.json changes on the base branch (0.2.3+).
+export const PUSH_TRIGGER = "  push: # a policy change re-checks open PRs into this branch\n    paths: ['.lake/config.json']\n";
+export function upgradeWorkflow(text) {
+  if (!/lake-gate/.test(text)) return { changed: false, manual: 'it does not look like the lake-gate workflow' };
+  const onBlock = text.match(/^on:\s*\n((?:[ \t]+.*\n|\s*\n)*)/m);
+  if (!onBlock) return { changed: false, manual: "add `push: { paths: ['.lake/config.json'] }` under `on:`" };
+  if (/^\s+push:/m.test(onBlock[1])) return { changed: false };
+  const end = onBlock.index + onBlock[0].length;
+  const body = onBlock[0].replace(/\s*$/, '\n');
+  return { changed: true, text: text.slice(0, onBlock.index) + body + PUSH_TRIGGER + text.slice(end).replace(/^\n*/, ''), what: 'added the push trigger: policy changes on the base branch re-check open PRs' };
+}
+
 export function init(root, { actionRef = ACTION_REF, force = false, trial = false } = {}) {
   const done = [];
   const write = (rel, content, overwrite = force) => {
@@ -37,10 +50,19 @@ export function init(root, { actionRef = ACTION_REF, force = false, trial = fals
     done.push(`wrote  ${rel}`);
   };
   // Short config: sensible defaults live in the code; only what a team usually changes is written.
+  // The team's policy is never overwritten, not even with --force: budget and approver rules must not vanish.
   const d = DEFAULT_CONFIG;
-  write('.lake/config.json', JSON.stringify({ requiredApprovals: d.requiredApprovals, autoApprove: d.autoApprove, budget: { approverAbove: null, approvers: [] }, ...(trial ? { try: true } : {}) }, null, 2) + '\n');
+  write('.lake/config.json', JSON.stringify({ requiredApprovals: d.requiredApprovals, autoApprove: d.autoApprove, budget: { approverAbove: null, approvers: [] }, ...(trial ? { try: true } : {}) }, null, 2) + '\n', false);
+  if (done.at(-1).startsWith('kept')) done[done.length - 1] = 'kept   .lake/config.json (your policy; init never changes it, even with --force)';
   write('.lake/plans/README.md', fs.readFileSync(path.join(TEMPLATES, 'plans-README.md'), 'utf8'));
-  write('.github/workflows/lake-gate.yml', fs.readFileSync(path.join(TEMPLATES, 'lake-gate.yml'), 'utf8').replace('__ACTION_REF__', actionRef));
+  const wfRel = '.github/workflows/lake-gate.yml';
+  const wfPath = path.join(root, wfRel);
+  const template = fs.readFileSync(path.join(TEMPLATES, 'lake-gate.yml'), 'utf8').replace('__ACTION_REF__', actionRef);
+  if (fs.existsSync(wfPath) && !force) {
+    const r = upgradeWorkflow(fs.readFileSync(wfPath, 'utf8'));
+    if (r.changed) { fs.writeFileSync(wfPath, r.text); done.push(`updated ${wfRel} (${r.what})`); }
+    else done.push(r.manual ? `kept   ${wfRel} (could not update it automatically: ${r.manual})` : `kept   ${wfRel} (up to date)`);
+  } else write(wfRel, template);
 
   const sp = path.join(root, '.claude', 'settings.json');
   let current = {};

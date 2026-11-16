@@ -10,12 +10,12 @@ import { repoRoot, loadPlan, getState, exportPlan, listPlans, localStatus } from
 import { client } from './github.js';
 import { parseRemote, applyEvents } from './sync.js';
 import { collectEvents, nativeDigests } from './github.js';
-import { loadPr, actions, viewer } from './workspace.js';
-import { loadConfig } from './config.js';
+import { loadPr, actions, viewer, isPlanFile } from './workspace.js';
+import { loadConfig, configWarning } from './config.js';
 import { range, money, estimatePlan, costLabel, mixedModels } from './estimate.js';
 import { costSuggestions, modelOptions, applyPatch, resolveModel, describePatch, budgetRule } from './models.js';
 import { stripEstimate } from './plan.js';
-import { acceptBody } from './review.js';
+import { acceptBody, statusLabel } from './review.js';
 
 const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 const sh = (cmd, args, cwd) => { try { return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); } catch { return null; } };
@@ -101,6 +101,30 @@ function resolveId(ctx, id) {
   return pid;
 }
 
+// No plan named, for tools that act on the PR: the plan(s) on this branch's PR, then plans this branch changed,
+// then the active plan. Several candidates and none is active: ask instead of guessing.
+async function resolvePrPlanId(ctx, id) {
+  if (id) return id;
+  const active = getState(ctx.root).active;
+  const pick = (ids, where) => {
+    const u = [...new Set(ids)];
+    if (u.length === 1) return u[0];
+    if (u.length > 1) { if (u.includes(active)) return active; throw new Error(`${where} has ${u.length} plans: ${u.join(', ')}. Pass plan_id to pick one.`); }
+    return null;
+  };
+  let number = null;
+  try { number = await ctx.pr(); } catch { /* no remote or no token: local only */ }
+  if (number) {
+    const files = (await ctx.github().all(`/pulls/${number}/files`)) || [];
+    const r = pick(files.filter((f) => isPlanFile(f.filename) && f.status !== 'removed').map((f) => f.filename.split('/').pop().slice(0, -3)), `PR #${number}`);
+    if (r) return r;
+  }
+  const base = ['origin/HEAD', 'origin/main', 'origin/master'].map((b) => sh('git', ['merge-base', 'HEAD', b], ctx.root)).find(Boolean);
+  const changed = [sh('git', ['diff', '--name-only', base || 'HEAD', '--', '.lake/plans'], ctx.root), sh('git', ['ls-files', '--others', '--exclude-standard', '--', '.lake/plans'], ctx.root)]
+    .join('\n').split('\n').filter((f) => isPlanFile(f)).map((f) => f.split('/').pop().slice(0, -3)).filter((pid) => loadPlan(ctx.root, pid));
+  return pick(changed, 'This branch') || resolveId(ctx, null);
+}
+
 function pushPlan(ctx, id, message) {
   const p = `.lake/plans/${id}.md`;
   sh('git', ['add', p], ctx.root);
@@ -118,7 +142,8 @@ async function prModel(ctx, id) {
 
 export function formatReview(m, { localDigest, link } = {}) {
   const L = [];
-  L.push(`Plan ${m.id} · v${m.short} (round ${m.round}) · status: ${m.status}${m.policy.needed && m.status === 'in-review' ? ` · needs ${m.policy.needed} more approval(s)` : ''}`);
+  L.push(`Plan ${m.id} · v${m.short} (round ${m.round}) · status: ${statusLabel(m.status)}${m.policy.needed && m.status === 'in-review' ? ` · needs ${m.policy.needed} more approval(s)` : ''}`);
+  if (m.status === 'in-review' && m.policy.auto?.mode !== 'off' && m.policy.auto?.reasons?.length) L.push(`Not auto-approved: ${m.policy.auto.reasons.join('; ')}`);
   L.push(`Estimate: ${m.estimate.complexity} complexity, ${costLabel(m.estimate)}`);
   if (m.budget?.required) L.push(`Budget approval: ${m.budget.satisfied ? `done by @${m.budget.approvedBy.join(', @')}` : `needed from one of ${m.budget.approvers.map((x) => '@' + x).join(', ')} (up to ${money(m.budget.exposure)} > ${money(m.budget.threshold)})`}`);
   if (m.suggestions?.length) L.push(`Lake suggestions: ${m.suggestions.map((x) => `[${x.id}] ${x.title} (saves up to ${money(x.saving[1])})`).join('; ')}`);
@@ -127,8 +152,15 @@ export function formatReview(m, { localDigest, link } = {}) {
   if (localDigest && localDigest !== m.digest) L.push(`Note: your local plan file is a different version (${localDigest.slice(0, 8)}) than the PR (${m.short}). Push it so reviewers see it.`);
   const cur = m.verdicts.filter((v) => v.version === m.digest && v.action !== 'revoke');
   if (cur.length) { L.push('', 'Verdicts on this version:'); for (const v of cur) L.push(`- @${v.login} ${v.action === 'approve' ? 'approved' : 'requested changes'}${v.self ? ' (author, does not count)' : ''} via ${v.via}${v.text ? `: ${v.text.replace(/\n+/g, ' ')}` : ''}`); }
-  const prev = m.verdicts.filter((v) => v.version !== m.digest && v.action === 'reject');
-  if (prev.length) { L.push('', 'Earlier rounds:'); for (const v of prev) L.push(`- round ${v.n}: @${v.login} requested changes${v.text ? `: ${v.text.replace(/\n+/g, ' ')}` : ''}`); }
+  const prev = (m.rounds || []).filter((r) => !r.current);
+  if (prev.length) {
+    L.push('', 'Earlier rounds:');
+    for (const r of prev) {
+      const vs = r.verdicts.filter((v) => v.action !== 'revoke');
+      L.push(`- round ${r.n} (v${r.short}): ${statusLabel(r.outcome)}${vs.length ? '' : ', no verdicts'}`);
+      for (const v of vs) L.push(`    @${v.login} ${v.action === 'approve' ? 'approved' : 'requested changes'}${v.self ? ' (author, does not count)' : ''}${v.text ? `: ${v.text.replace(/\n+/g, ' ').slice(0, 300)}` : ''}`);
+    }
+  }
   const open = m.threads.filter((t) => !t.resolved);
   if (open.length) {
     L.push('', `Open threads (${open.length}):`);
@@ -177,7 +209,7 @@ export async function callTool(ctx, name, a = {}) {
       return `Review requested on PR #${number} for ${plan.id} v${plan.short}.${note}${link ? `\nReview page: ${link}` : ''}\nCall lake_review_status with wait_seconds to wait for feedback. Do not implement until it is approved.`;
     }
     case 'lake_review_status': {
-      const id = resolveId(ctx, a.plan_id);
+      const id = await resolvePrPlanId(ctx, a.plan_id);
       const local = loadPlan(ctx.root, id);
       const localCost = () => {
         if (!local) return '';
@@ -207,7 +239,8 @@ export async function callTool(ctx, name, a = {}) {
         applyEvents(ctx.root, { events: raw, prAuthor: pr.user.login, prNumber: number, digestAt });
       } catch { /* status is still useful without a local sync */ }
       const changed = waited && sig(model) !== start ? `Changed after ${waited}s.\n` : waited ? `No change after ${waited}s.\n` : '';
-      return changed + formatReview(model, { localDigest: local?.digest, link: reviewLink(config, ctx.github().repo, number, id) });
+      const cw = [configWarning(config), configWarning(loadConfig(ctx.root))].filter(Boolean);
+      return changed + [...new Set(cw)].map((w) => `Warning: ${w}\n`).join('') + formatReview(model, { localDigest: local?.digest, link: reviewLink(config, ctx.github().repo, number, id) });
     }
     case 'lake_submit_revision': {
       const id = resolveId(ctx, a.plan_id);
@@ -225,21 +258,22 @@ export async function callTool(ctx, name, a = {}) {
     }
     case '_reply': {
       const number = await ctx.pr(); if (!number) throw new Error('No open PR for this branch.');
-      await actions.reply(ctx.github(), number, { planId: resolveId(ctx, a.plan_id), thread: a.thread_id, text: a.text, via });
+      await actions.reply(ctx.github(), number, { planId: await resolvePrPlanId(ctx, a.plan_id), thread: a.thread_id, text: a.text, via });
       return `Replied in thread ${a.thread_id} on PR #${number}.`;
     }
     case '_comment': {
-      const id = resolveId(ctx, a.plan_id);
+      const id = await resolvePrPlanId(ctx, a.plan_id);
       const { number, model } = await prModel(ctx, id);
       if (!model) throw new Error(`No PR with plan ${id}.`);
-      const lines = String(model.body).split('\n'); const s = Math.max(1, Math.floor(a.line)); const e = Math.max(s, Math.floor(a.end_line || s));
+      const lines = String(model.body).split('\n'); const s = Math.floor(Number(a.line)); const e = Math.max(s, Math.floor(Number(a.end_line) || s));
       const last = stripEstimate(String(model.body)).replace(/\s+$/, '').split('\n').length;
-      if (!Number.isFinite(s) || e > last) return `Not posted: line ${Number.isFinite(e) ? e : a.line} is outside the plan (lines 1–${last}). Call lake_review_status for the numbered plan text.`;
+      if (!Number.isFinite(s) || s < 1) return `Not posted: line ${a.line} is outside the plan (lines 1–${last}). Lines start at 1. Call lake_review_status for the numbered plan text.`;
+      if (e > last) return `Not posted: line ${Number.isFinite(e) ? e : a.line} is outside the plan (lines 1–${last}). Call lake_review_status for the numbered plan text.`;
       await actions.comment(ctx.github(), number, { planId: id, version: model.digest, anchor: { start: s, end: e, quote: lines.slice(s - 1, e).join('\n') }, text: a.text, via });
       return `Commented on ${id} v${model.short}, line ${s}${e > s ? `–${e}` : ''}.`;
     }
     case '_approve': case '_changes': {
-      const id = resolveId(ctx, a.plan_id);
+      const id = await resolvePrPlanId(ctx, a.plan_id);
       const { number, model, pr } = await prModel(ctx, id);
       if (!model) throw new Error(`No open PR with plan ${id}.`);
       const me = (await viewer(ctx.github()))?.login;
@@ -257,7 +291,7 @@ export async function callTool(ctx, name, a = {}) {
       return `Plan ${id} v${plan.short}\n` + formatCost(est, cfg, undefined, est.exposure > (cfg.budget?.approverAbove ?? Infinity) ? { required: true, exposure: est.exposure, threshold: cfg.budget.approverAbove, approvers: (cfg.budget.approvers || []).map((x) => String(x).replace(/^@/, '')), satisfied: false } : null);
     }
     case '_suggest': {
-      const { number, model, config } = await prModel(ctx, resolveId(ctx, a.plan_id));
+      const { number, model, config } = await prModel(ctx, await resolvePrPlanId(ctx, a.plan_id));
       if (!model) throw new Error(`No open PR with plan ${a.plan_id}.`);
       const s = patchFor(a, model.estimate, config);
       await actions.suggest(ctx.github(), number, { planId: model.id, version: model.digest, title: s.title, patch: s.patch, saving: s.saving, text: a.comment, via });

@@ -72,7 +72,7 @@ test('G-02 a hand-edited config with a trailing comma or comments works; a broke
   fs.writeFileSync(path.join(root, '.lake/config.json'), '{ "requiredApprovals": 1 "oops" }');
   const ok = hook(root, 'Bash', { command: 'git status' });
   assert.ok(!denied(ok));
-  assert.match(ok.systemMessage, /\.lake\/config\.json is not valid JSON.*safe defaults/);
+  assert.match(ok.systemMessage, /\.lake\/config\.json is not valid JSON.*last valid policy/);
   assert.ok(denied(hook(root, 'Write', { file_path: path.join(root, 'src/x.js'), content: 'x' })), 'gated work stays gated with the defaults');
 });
 
@@ -88,7 +88,8 @@ test('G-03 the PR check uses the policy at the head of the base branch, and warn
   assert.match(renderSummary(ev), /@dana must approve/);
   const broken = fakeGitHub({ files, contents: { '.lake/plans/add-webhook-retries.md': planText }, comments, baseConfig: '{ "requiredApprovals": 1 "x" }' });
   const ev2 = await evaluatePr(client({ token: 't', repo: 'acme/app', fetchImpl: broken.fetchImpl }), 7);
-  assert.match(renderSummary(ev2), /Warning:.*not valid JSON/);
+  assert.match(renderSummary(ev2), /Error:.*not valid JSON.*fails closed/);
+  assert.equal(ev2.state, 'failure');
 });
 
 test('G-04 the summary comment is not read as a command', async () => {

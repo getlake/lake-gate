@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { loadConfig } from './config.js';
+import { loadConfig, configWarning } from './config.js';
 import { repoRoot, stateDir, getState, setState, loadPlan, exportPlan, localStatus, markGated, localCodeLines } from './store.js';
 import { range, costLabel } from './estimate.js';
 
@@ -24,17 +24,13 @@ export function handleClaudePreToolUse(input, env = process.env) {
   const config = loadConfig(root); // never throws: a broken file means defaults + a warning
   const tool = input.tool_name;
   const ti = input.tool_input || {};
-  const warn = config.configError ? `lake-gate: ${config.configError}. Using safe defaults until it's fixed.` : null;
-  const once = (key, res) => {
-    if (!warn) return res;
-    const state = getState(root); const k = `cfg:${input.session_id || 'default'}:${config.configError}`;
-    if ((state.noticed || []).includes(k)) return res;
-    state.noticed = [...(state.noticed || []).slice(-50), k]; setState(root, state);
-    if (!res) return { systemMessage: warn };
-    return { ...res, systemMessage: [res.systemMessage, warn].filter(Boolean).join('\n') };
-  };
+  // A broken policy file is shown on every gated call until it's fixed (the rule in force is the last valid one,
+  // or the strict fallback): the user sees it in Claude Code, and the agent can tell them.
+  const warn = config.configError ? `lake-gate: ${configWarning(config)}` : null;
   const r = decide();
-  return r && r.hookSpecificOutput?.permissionDecision === 'deny' && warn ? { ...r, systemMessage: [r.systemMessage, warn].filter(Boolean).join('\n') } : once('cfg', r);
+  if (!warn) return r;
+  if (!r) return { systemMessage: warn };
+  return { ...r, systemMessage: [r.systemMessage, warn].filter(Boolean).join('\n') };
 
   function decide() { // eslint-disable-line no-inner-declarations
 

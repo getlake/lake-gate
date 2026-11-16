@@ -33,6 +33,9 @@ export function messageOf(body) {
     .replace(/^>.*$/gm, '').trim();
 }
 
+// One vocabulary for plan status across the review app, the CLI and MCP.
+export const STATUS_LABELS = { 'in-review': 'In review', pending: 'In review', 'changes-requested': 'Changes requested', approved: 'Approved', 'needs-budget': 'Needs budget OK', 'auto-approved': 'Auto-approved', draft: 'Draft', 'approved-then-edited': 'Approved, then edited', superseded: 'Superseded' };
+export const statusLabel = (st) => STATUS_LABELS[st] || st;
 export const shortOf = (d) => String(d || '').slice(0, 8);
 export function newId(n = 8) {
   const a = 'abcdefghijkmnpqrstuvwxyz23456789';

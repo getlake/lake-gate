@@ -22,7 +22,7 @@ Context: deliveries fail silently today.
 4. Add replay and failure tests
 `;
 
-export function fakeGitHub({ prAuthor = 'maya', files = [], contents = {}, baseConfig = '{"autoApprove":{"mode":"shadow"}}', baseShaConfig, comments = [], reviews = [], fileStats = {} } = {}) {
+export function fakeGitHub({ prAuthor = 'maya', files = [], contents = {}, baseConfig = '{"autoApprove":{"mode":"shadow"}}', baseShaConfig, comments = [], reviews = [], fileStats = {}, configHistory = {} } = {}) {
   const calls = [];
   const pr = { number: 7, user: { login: prAuthor }, head: { sha: 'headsha' }, base: { sha: 'basesha', ref: 'main' } };
   const json = (v, status = 200) => ({ ok: status < 400, status, json: async () => v, text: async () => JSON.stringify(v) });
@@ -35,11 +35,11 @@ export function fakeGitHub({ prAuthor = 'maya', files = [], contents = {}, baseC
     if (m === 'GET' && p === '/pulls/7/files') return list(files.map((f) => ({ filename: f, status: 'modified', ...(fileStats[f] || {}) })));
     if (m === 'GET' && p === '/issues/7/comments') return list(comments);
     if (m === 'GET' && p === '/pulls/7/commits') return list([]);
-    if (m === 'GET' && p === '/commits') return json([]);
+    if (m === 'GET' && p === '/commits') return json(u.searchParams.get('path') === '.lake/config.json' ? Object.keys(configHistory).map((sha) => ({ sha })) : []);
     if (m === 'GET' && p === '/pulls/7/reviews') return list(reviews);
     if (m === 'GET' && p.startsWith('/contents/')) {
       const f = decodeURIComponent(p.slice('/contents/'.length)); const ref = u.searchParams.get('ref');
-      const v = f === '.lake/config.json' ? (ref === 'main' ? baseConfig : ref === 'basesha' ? (baseShaConfig ?? baseConfig) : contents[f + '@head-config']) : ref === 'headsha' ? contents[f] : null;
+      const v = f === '.lake/config.json' && configHistory[ref] != null ? configHistory[ref] : f === '.lake/config.json' ? (ref === 'main' ? baseConfig : ref === 'basesha' ? (baseShaConfig ?? baseConfig) : contents[f + '@head-config']) : ref === 'headsha' ? contents[f] : null;
       return v == null ? json({ message: 'Not Found' }, 404) : json({ content: Buffer.from(v).toString('base64') });
     }
     if (m === 'GET' && p === '/pulls') return json([pr]);

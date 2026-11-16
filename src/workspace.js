@@ -1,7 +1,6 @@
 // Reads review state for plans from GitHub PRs and writes review actions back as PR comments.
 // Browser-safe: used by the Lake review UI (directly or through `lake-gate ui`'s local proxy) and by the MCP server.
-import { safeParseConfig } from './config-core.js';
-import { resolveBudgetApprovers, codeLinesOf, MARKER } from './github.js';
+import { resolveBudgetApprovers, codeLinesOf, MARKER, loadBaseConfig } from './github.js';
 import { applyPatch } from './models.js';
 import { splitFrontmatter, renderPlanFile, readPlanText } from './plan.js';
 import { estimatePlan, renderEstimate, autoApproveVerdict } from './estimate.js';
@@ -11,12 +10,12 @@ import { buildPlanReview, versionsFromSnapshots, normalizeIssueComment, normaliz
 export const isPlanFile = (f) => /^\.lake\/plans\/[^/]+\.md$/.test(f) && !f.endsWith('/README.md');
 const MAX_COMMITS = 60;
 
-export async function loadPr(gh, number, { pr: prIn } = {}) {
+// pr / files / config may be passed in by loadWorkspace, which already has them (fewer API calls).
+export async function loadPr(gh, number, { pr: prIn, files: filesIn, config: configIn } = {}) {
   const pr = prIn && prIn.base ? prIn : await gh.req('GET', `/pulls/${number}`);
-  const [cfgText, files, commitsAll, comments, reviews, lines] = await Promise.all([
-    gh.file('.lake/config.json', pr.base.ref).catch(() => null).then((t) => t ?? gh.file('.lake/config.json', pr.base.sha)), gh.all(`/pulls/${number}/files`), gh.all(`/pulls/${number}/commits`),
+  const [config, files, commitsAll, comments, reviews, lines] = await Promise.all([
+    configIn || loadBaseConfig(gh, pr), filesIn || gh.all(`/pulls/${number}/files`), gh.all(`/pulls/${number}/commits`),
     gh.all(`/issues/${number}/comments`), gh.all(`/pulls/${number}/reviews`), gh.all(`/pulls/${number}/comments`)]);
-  const config = safeParseConfig(cfgText, `.lake/config.json on ${pr.base.ref}`);
   const commits = commitsAll.slice(-MAX_COMMITS);
   const events = [...comments.filter((c) => !String(c.body || '').startsWith(MARKER)).map(normalizeIssueComment), ...reviews.filter((r) => r.state !== 'DISMISSED' && r.state !== 'PENDING').map(normalizeReview), ...lines.map(normalizeLineComment)];
   const requestedReviewers = (pr.requested_reviewers || []).map((u) => u.login);
@@ -46,16 +45,20 @@ export async function loadPr(gh, number, { pr: prIn } = {}) {
   return { pr, config, plans, events };
 }
 
-// All plans in recent PRs of a repo (open first). One page of PRs keeps API use predictable.
-export async function loadWorkspace(gh, { state = 'all', limit = 20 } = {}) {
-  const prs = ((await gh.req('GET', `/pulls?state=${state}&sort=updated&direction=desc&per_page=${limit}`)) || []);
+// All plans in recent PRs of a repo (open first). One page of PRs keeps API use predictable; the base policy is read
+// once per base branch. focus: load just this PR (deep links; saves an unauthenticated visitor's 60/hour quota).
+export async function loadWorkspace(gh, { state = 'all', limit = 20, focus = null } = {}) {
+  const prs = focus ? [await gh.req('GET', `/pulls/${focus}`)].filter(Boolean)
+    : ((await gh.req('GET', `/pulls?state=${state}&sort=updated&direction=desc&per_page=${limit}`)) || []);
+  const configs = new Map();
+  const configFor = (pr) => { if (!configs.has(pr.base.ref)) configs.set(pr.base.ref, loadBaseConfig(gh, pr)); return configs.get(pr.base.ref); };
   // In parallel: one slow PR (or a slow unauthenticated API) shouldn't make the whole page wait in line.
   const per = await Promise.all(prs.map(async (pr) => {
     const files = await gh.all(`/pulls/${pr.number}/files`);
     if (!files.some((f) => isPlanFile(f.filename) && f.status !== 'removed')) return [];
-    return (await loadPr(gh, pr.number)).plans;
+    return (await loadPr(gh, pr.number, { pr, files, config: await configFor(pr) })).plans;
   }));
-  return { repo: gh.repo, plans: per.flat() };
+  return { repo: gh.repo, plans: per.flat(), partial: !!focus };
 }
 
 // ---- Writes: everything is a PR comment (or a reply on a native line comment) ----
@@ -82,7 +85,7 @@ export const actions = {
     const path = `.lake/plans/${o.planId}.md`;
     const cur = await gh.req('GET', `/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(pr.head.ref)}`);
     if (!cur) throw new Error(`${path} not found on ${pr.head.ref}`);
-    const config = safeParseConfig(await gh.file('.lake/config.json', pr.base.ref));
+    const config = await loadBaseConfig(gh, pr);
     const text = patchPlanFile(fromB64(cur.content), o.patch, config);
     await gh.req('PUT', `/contents/${path.split('/').map(encodeURIComponent).join('/')}`, { message: `Plan ${o.planId}: ${o.title || 'apply suggestion'}`, content: toB64(text), sha: cur.sha, branch: pr.head.ref });
     const nv = readPlanText(text).digest;

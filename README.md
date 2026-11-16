@@ -30,6 +30,8 @@ Then in GitHub: **Settings → Branches → branch protection → Require status
 
 Requirements: Node 18.17+, git, a GitHub repo. macOS/Linux shells for the hook (Windows: use WSL for now).
 
+**Upgrading.** Run `npx lake-gate@latest init` again and commit. It updates the workflow in place (0.2.3+ adds a `push` trigger so policy changes re-check open PRs) and keeps everything else. It never touches `.lake/config.json`, not even with `--force`.
+
 **PRs opened by an agent or bot with the workflow's `GITHUB_TOKEN`** don't trigger other workflows, and GitHub may hold the Lake run as "Approval required" until a maintainer approves it, so `lake/plan-approval` doesn't appear. Open agent PRs with a personal token or a GitHub App token, or push one commit as a human.
 
 ## The flow
@@ -52,7 +54,7 @@ Commands on the PR, one per line:
 
 Everything is stored on the PR as normal comments and reviews. There's no database and nothing new to host. The review app, the Action, `lake-gate sync` and the MCP server all read the same comments.
 
-**Review app.** `npx lake-gate ui` opens `http://127.0.0.1:4848`. It uses your `gh` login (or `GITHUB_TOKEN`) through a small local proxy: the token never reaches the page, the proxy only talks to this repo, and it only writes PR comments. It also shows plans you haven't pushed yet, as drafts, with their local history. The hosted copy at `getlake.github.io/lake-gate/app/` is the same static app. It asks for a fine-grained token (Pull requests: read & write, Contents: read) and keeps it in your browser.
+**Review app.** `npx lake-gate ui` opens `http://127.0.0.1:4848`. It uses your `gh` login (or `GITHUB_TOKEN`) through a small local proxy: the token never reaches the page, the proxy only talks to this repo, and it only writes PR comments. It also shows plans you haven't pushed yet, as drafts, with their local history. The hosted copy at `getlake.github.io/lake-gate/app/` is the same static app. It asks for a fine-grained token (Pull requests: read & write, Contents: read) and keeps it in your browser. Without a token it can still show public repos read-only: a PR link reads just that PR, the plan list shows the 10 most recent open PRs, and responses are cached in your browser, since GitHub allows 60 unauthenticated calls an hour. If that limit is hit, the app says when it resets and asks for a token.
 
 - Select text in a plan, or click a line, to comment on it (`c`). Threads reply and resolve.
 - Each pushed version of the plan is a **round**. Comments stay attached to the round they were made on, and move forward to the current text when the quoted line still exists.
@@ -95,7 +97,7 @@ It's a rough heuristic, the same one lake-meter uses: complexity from keywords, 
 ## CLI
 
 ```
-lake-gate init [--try] [--force]        set up the repo (--try: local-only trial, self-approval allowed)
+lake-gate init [--try] [--force]        set up or upgrade the repo (--try: local-only trial; --force rewrites the workflow from the template; your .lake/config.json is always kept)
 lake-gate approve [id]                  approve your own plan (trial mode only)
 lake-gate uninstall                     remove the hook, MCP entries and workflow (keeps .lake/)
 lake-gate plan <file.md|-> [--id name]   save a plan with an estimate and make it active
@@ -128,7 +130,7 @@ lake-gate hook claude                    the Claude Code PreToolUse hook (stdin 
 | `nativeReviews` | `true` | GitHub's own Approve / Request changes count for the plan version at the reviewed commit |
 | `reviewUrl` | hosted review app | Where the summary comment's buttons point. `""` hides them |
 
-The PR check reads the config from the **current head of the base branch**, so a PR can't loosen its own policy, and tightening the policy on `main` re-checks open PRs right away (the workflow also runs on pushes that change `.lake/config.json`). The file may use `//` comments and trailing commas. If it still can't be read, lake-gate names the file, line and column, and keeps gating with its defaults instead of blocking every command.
+The PR check reads the config from the **current head of the base branch**, so a PR can't loosen its own policy, and tightening the policy on `main` re-checks open PRs right away (the workflow also runs on pushes that change `.lake/config.json`). The file may use `//` comments and trailing commas. If it still can't be read, lake-gate names the file, line and column and **never falls back to a looser policy**: it keeps the last valid version from the branch history (the PR summary and the hook say so). With no valid version at all, nothing auto-approves and the PR check fails with "Policy file unreadable" until the file is fixed.
 
 ## What it does not do (read this)
 

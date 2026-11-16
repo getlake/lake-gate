@@ -100,20 +100,25 @@ function parseRoute() {
   return r;
 }
 function friendly(m) {
+  if (/rate limit/i.test(m) && !/-> \d/.test(m)) return m; // our own clear message (with the reset time)
   if (/-> 401/.test(m)) return 'GitHub rejected the token. Check it and try again.';
   if (/-> 403/.test(m)) return 'GitHub refused (rate limit or missing permission). A token fixes the rate limit.';
   if (/-> 404|Not Found/.test(m)) return 'Repository not found. Private repos need a token with access.';
   return m;
 }
 async function ensureSource(r) {
-  if (S.base === r.base && S.src) return;
+  if (S.base === r.base && S.src) {
+    // Opened from a PR deep link without a token (one PR read), now browsing the repo: read the rest.
+    if (S.ws?.partial && r.view !== 'plan') { renderLoading(); try { S.ws = await S.src.load(); } catch (e) { toast(esc(friendly(e.message)), 'x'); } }
+    return;
+  }
   S.base = r.base; S.ws = null; S.err = null; S.sel = 0;
   try {
     if (r.mode === 'demo') { S.src = demoSource(); track('demo'); }
     else if (r.mode === 'local') { S.src = await localSource(); if (!S.src) throw new Error('Local mode needs `npx lake-gate ui`.'); }
     else { S.src = githubSource(r.repo); track('repo'); }
     renderLoading();
-    S.ws = await S.src.load();
+    S.ws = await S.src.load({ focus: r.mode === 'github' && r.view === 'plan' ? r.pr : null });
   } catch (e) {
     S.err = e.message || String(e);
     if (r.mode === 'github') { S.src = null; S.base = null; go(`#/connect?repo=${encodeURIComponent(r.repo || '')}&err=${encodeURIComponent(friendly(S.err))}`); }
@@ -198,6 +203,7 @@ function dash() {
     <div class="eyebrow"><span class="ln"></span>${esc(S.src.repo)}${S.src.mode === 'demo' ? ' <span class="demo-flag">Demo · fictional team</span>' : ''}</div>
     <h1 class="title">${me ? `${greeting()}, ${esc(first(me))}` : 'Plans'}</h1>
     <p class="sub">${needs.length ? `${needs.length} plan${needs.length > 1 ? 's need' : ' needs'} your review` : 'Nothing is waiting on you'}${back ? ` · ${back} back with the author` : ''}.</p>
+    ${S.ws.limited ? `<p class="fine">Read without a GitHub token: the 10 most recent open PRs. <a href="#/connect?repo=${encodeURIComponent(S.src.repo)}">Connect a token</a> to see all plans and to review.</p>` : ''}
   </div>${S.src.mode !== 'demo' ? `<button class="btn" data-act="refresh">${icon('refresh', 's')}Refresh</button>` : ''}</div>
   ${needs[0] && f !== 'needs' ? spotlight(needs[0]) : ''}
   <div class="stats stagger">
@@ -671,7 +677,7 @@ document.addEventListener('click', async (e) => {
     case 'close': case 'close-bg': S.sheet = null; S.help = false; return rerender();
     case 'help': S.help = true; return rerender();
     case 'demo-reset': S.src.reset?.(); S.ws = await S.src.load(); S.openThreads.clear(); toast('Demo reset'); return rerender();
-    case 'refresh': S.ws = await S.src.load(); toast('Up to date'); return rerender();
+    case 'refresh': S.ws = await S.src.load({ fresh: true }); toast('Up to date'); return rerender();
     case 'signout': tokenStore.clear(); toast('Token removed from this browser'); return rerender();
     case 'add': {
       const s = Number(el.dataset.s); const eL = Number(el.dataset.e);

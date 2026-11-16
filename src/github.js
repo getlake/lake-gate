@@ -1,4 +1,4 @@
-import { parseConfig, safeParseConfig } from './config-core.js';
+import { safeParseConfig, withLastValid, configWarning } from './config-core.js';
 import { readPlanText } from './plan.js';
 import { estimatePlan, range, money, costLabel, autoApproveVerdict } from './estimate.js';
 import { evaluatePlan, isPassing, parseCommands } from './policy.js';
@@ -14,18 +14,45 @@ export function fromBase64(b64) {
   return new TextDecoder().decode(Uint8Array.from(bin, (ch) => ch.charCodeAt(0)));
 }
 
-export function client({ token, repo, api = 'https://api.github.com', fetchImpl = globalThis.fetch }) {
+export class RateLimitError extends Error {
+  constructor(reset, authed) {
+    const at = reset ? new Date(reset * 1000) : null;
+    super(`GitHub API rate limit reached${authed ? '' : ' (60 requests/hour without a token)'}${at ? `; it resets at ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })}` : ''}.${authed ? '' : ' Connect a GitHub token to keep going.'}`);
+    this.reset = reset; this.authed = authed; this.rateLimited = true;
+  }
+}
+// Plan files and commit lists at a full commit SHA never change: cache them for the life of the client
+// (and in `cache`, if given). Everything else is revalidated with ETags (304s), or served from `cache`
+// while younger than `freshMs` (the browser app uses this so reloads don't spend the visitor's quota).
+const IMMUTABLE = /[?&](ref|sha)=[0-9a-f]{40}(&|$)/;
+export function client({ token, repo, api = 'https://api.github.com', fetchImpl = globalThis.fetch, cache = null, freshMs = 0 }) {
   const [owner, name] = repo.split('/');
+  const mem = new Map();
+  const stats = { requests: 0, cached: 0, notModified: 0 };
+  let since = 0; // refresh(): entries read before this are revalidated, not trusted
   async function req(method, url, body) {
     const full = url.startsWith('http') ? url : url.startsWith('~/') ? `${api}${url.slice(1)}` : `${api}/repos/${owner}/${name}${url}`;
+    const get = method === 'GET';
+    const immutable = get && IMMUTABLE.test(full);
+    let hit = get ? (mem.get(full) || cache?.get(full) || null) : null;
+    if (hit && (immutable || (freshMs && (hit.at || 0) > since && Date.now() - (hit.at || 0) < freshMs))) { stats.cached++; return hit.data; }
+    stats.requests++;
     const res = await fetchImpl(full, {
       method,
-      headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(typeof window === 'undefined' ? { 'User-Agent': 'lake-gate' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(typeof window === 'undefined' ? { 'User-Agent': 'lake-gate' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}), ...(hit?.etag ? { 'If-None-Match': hit.etag } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (res.status === 404 && method === 'GET') return null;
-    if (!res.ok) throw new Error(`GitHub ${method} ${url} -> ${res.status} ${await res.text()}`);
-    return res.status === 204 ? null : res.json();
+    if (res.status === 304 && hit) { stats.notModified++; hit = { ...hit, at: Date.now() + 1 }; mem.set(full, hit); cache?.set(full, hit); return hit.data; }
+    if (res.status === 404 && get) return null;
+    if (!res.ok) {
+      const text = await res.text();
+      const h = (k) => res.headers?.get?.(k);
+      if ((res.status === 403 || res.status === 429) && (h('x-ratelimit-remaining') === '0' || /rate limit/i.test(text))) throw new RateLimitError(Number(h('x-ratelimit-reset')) || null, !!token);
+      throw new Error(`GitHub ${method} ${url} -> ${res.status} ${text}`);
+    }
+    const data = res.status === 204 ? null : await res.json();
+    if (get) { const e = { data, etag: res.headers?.get?.('etag') || null, at: Date.now() + 1 }; mem.set(full, e); cache?.set(full, e); }
+    return data;
   }
   async function all(url) {
     const out = [];
@@ -37,11 +64,29 @@ export function client({ token, repo, api = 'https://api.github.com', fetchImpl 
     }
     return out;
   }
+  // Without a token (public repos in the browser app), file contents come from raw.githubusercontent.com, which
+  // doesn't count against the API's 60 calls/hour. Commit-pinned files are cached like API reads.
+  const useRaw = !token && api === 'https://api.github.com';
+  async function rawFile(p, ref) {
+    const url = `https://raw.githubusercontent.com/${owner}/${name}/${encodeURIComponent(ref)}/${p.split('/').map(encodeURIComponent).join('/')}`;
+    const pinned = /^[0-9a-f]{40}$/.test(ref);
+    const hit = mem.get(url) || cache?.get(url);
+    if (hit && (pinned || (freshMs && (hit.at || 0) > since && Date.now() - hit.at < freshMs))) { stats.cached++; return hit.data; }
+    stats.raw = (stats.raw || 0) + 1;
+    const res = await fetchImpl(url, { method: 'GET' });
+    if (res.status === 404) { const e = { data: null, at: Date.now() + 1 }; if (pinned) { mem.set(url, e); cache?.set(url, e); } return null; }
+    if (!res.ok) throw new Error(`GitHub raw ${p}@${ref} -> ${res.status}`);
+    const e = { data: await res.text(), at: Date.now() + 1 }; mem.set(url, e); cache?.set(url, e);
+    return e.data;
+  }
   async function file(p, ref) {
+    if (useRaw) { try { return await rawFile(p, ref); } catch { /* fall back to the API */ } }
     const r = await req('GET', `/contents/${p.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`);
     return r && r.content ? fromBase64(r.content) : null;
   }
-  return { req, all, file, owner, name, repo, api };
+  // refresh(): the next reads revalidate instead of trusting fresh cache entries.
+  const refresh = () => { since = Date.now() + 2; };
+  return { req, all, file, owner, name, repo, api, stats, refresh, authed: !!token };
 }
 
 export async function collectEvents(gh, number) {
@@ -94,8 +139,18 @@ export const codeLinesOf = (files) => files.filter((f) => !f.filename.startsWith
 // The team's policy: .lake/config.json at the HEAD of the base branch (pr.base.ref), not at the commit the PR
 // branched from, so tightening policy on main applies to open PRs at once. A PR still can't loosen its own policy.
 export async function loadBaseConfig(gh, pr) {
-  const text = await gh.file('.lake/config.json', pr.base.ref).catch(() => null) ?? await gh.file('.lake/config.json', pr.base.sha);
-  return safeParseConfig(text, `.lake/config.json on ${pr.base.ref}`);
+  const CFG = '.lake/config.json';
+  const ref = pr.base.ref;
+  const text = await gh.file(CFG, ref).catch(() => null) ?? await gh.file(CFG, pr.base.sha);
+  const c = safeParseConfig(text, `${CFG} on ${ref}`);
+  if (!c.configError) return c;
+  // A broken policy never loosens the gate: keep the last valid version on the base branch, else fail closed.
+  const hist = (await gh.req('GET', `/commits?sha=${encodeURIComponent(ref)}&path=${encodeURIComponent(CFG)}&per_page=10`).catch(() => null)) || [];
+  for (const h of hist) {
+    const r = withLastValid(c, await gh.file(CFG, h.sha).catch(() => null), `${ref} at ${h.sha.slice(0, 7)}`);
+    if (r.policyFrom) return r;
+  }
+  return c;
 }
 
 // Did an earlier version of this plan in the PR need a human? Then a shrunk version can't auto-approve.
@@ -132,7 +187,11 @@ export async function evaluatePr(gh, number) {
     const autoContext = { codeLines, gatedBefore: await gatedBefore(gh, p, pr, prCommits, config, plan.digest) };
     results.push({ ...evaluatePlan({ plan, estimate, events: planEvents, prAuthor: pr.user.login, config, budgetApprovers, autoContext }), title: plan.title, path: p, estimate });
   }
-  return { pr, config, results, codeChanged, repo: gh.repo, ...summarize(results, codeChanged, config) };
+  const sum = config.policyBroken
+    ? { state: 'failure', description: `Policy file unreadable: fix .lake/config.json on ${pr.base.ref} ${(config.configError.match(/\(line \d+, column \d+\)/) || [''])[0]}`.trim() }
+    : summarize(results, codeChanged, config);
+  if (config.policyFrom) sum.description = `.lake/config.json broken, last valid policy kept · ${sum.description}`;
+  return { pr, config, results, codeChanged, repo: gh.repo, ...sum };
 }
 
 export function summarize(results, codeChanged, config) {
@@ -151,18 +210,21 @@ export function summarize(results, codeChanged, config) {
 
 export function renderSummary(ev) {
   const lines = [MARKER, '### Lake plan gate', ''];
-  if (ev.config?.configError) lines.push(`> **Warning:** ${ev.config.configError}. lake-gate is using its default policy until it's fixed.`, '');
+  if (ev.config?.configError) lines.push(`> **${ev.config.policyBroken ? 'Error' : 'Warning'}:** ${configWarning(ev.config)}`, '');
   if (!ev.results.length) { lines.push(ev.description + '.'); return lines.join('\n'); }
   lines.push('| Plan | Version | Status | Complexity | Est. cost |', '|---|---|---|---|---|');
+  const autoWhy = [];
   for (const r of ev.results) {
     const status = r.state === 'approved' ? `approved by ${r.approvers.map((a) => '@' + a).join(', ')}` :
       r.state === 'auto-approved' ? 'auto-approved by policy' :
       r.state === 'changes-requested' ? `changes requested by ${r.blockers.map((a) => '@' + a).join(', ')}` :
       r.state === 'needs-budget' ? `approved by ${r.approvers.map((a) => '@' + a).join(', ')}, **needs budget approval**` : `needs ${r.needed} approval(s)${r.budget?.required ? ' + budget approval' : ''}`;
+    if (r.auto?.mode !== 'off' && r.auto?.reasons?.length && !isPassing(r)) autoWhy.push(`\`${r.id}\`: ${r.auto.reasons.join('; ')}`);
     const est = r.estimate;
     const cost = `${costLabel(est)}${est.cap != null ? ` (cap ${money(est.cap)})` : ''}`;
     lines.push(`| [${r.title.replace(/\|/g, '/')}](${r.path}) | \`${r.short}\` | ${status} | ${est.complexity} | ${cost} |`);
   }
+  if (autoWhy.length) lines.push('', `Not auto-approved (needs a human): ${autoWhy.length === 1 ? autoWhy[0] : ''}`, ...(autoWhy.length > 1 ? autoWhy.map((w) => `- ${w}`) : []));
   for (const r of ev.results.filter((x) => x.budget?.unreadable?.length).slice(0, 1)) {
     lines.push('', `> **Warning:** couldn't read ${r.budget.unreadable.join(', ')} with this token, so ${r.budget.fallback === 'owner' ? 'the repo owner' : 'repo admins'} and any listed login can give the budget approval. List GitHub logins in \`budget.approvers\` (e.g. \`["alice","bob"]\`) to fix this.`);
   }

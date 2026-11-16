@@ -54,7 +54,7 @@ test('MCP tools: status with threads, wait for feedback, version-checked approve
   } });
   assert.ok(TOOLS.every((t) => t.name.startsWith('lake_') && t.inputSchema.type === 'object'));
   let out = await callTool(ctx, 'lake_review_status', {});
-  assert.match(out, new RegExp(`Plan retries · v${short} \\(round 1\\) · status: in-review`));
+  assert.match(out, new RegExp(`Plan retries · v${short} \\(round 1\\) · status: In review`));
   assert.match(out, /  4\| 1\. Retry 6 times/);
   out = await callTool(ctx, 'lake_review_status', { wait_seconds: 120 });
   assert.match(out, /^Changed after 40s/);
@@ -69,7 +69,7 @@ test('MCP tools: status with threads, wait for feedback, version-checked approve
   assert.match(f.comments.at(-1).body, new RegExp(`^/lake approve retries@${short}`));
   assert.match(f.comments.at(-1).body, /Claude Code \(MCP\)/);
   out = await callTool(ctx, 'lake_review_status', {});
-  assert.match(out, /status: approved/);
+  assert.match(out, /status: Approved/);
   assert.match(out, /@noah approved via Claude Code \(MCP\): Go/);
   const approvals = JSON.parse(fs.readFileSync(path.join(repo, '.git', 'lake', 'approvals.json'), 'utf8'));
   assert.equal(approvals.retries.state, 'approved', 'status syncs approvals locally so the hook opens');

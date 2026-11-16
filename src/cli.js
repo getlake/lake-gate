@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { repoRoot, exportPlan, loadPlan, listPlans, getState, setState, localStatus, getApprovals, setApprovals } from './store.js';
-import { loadConfig } from './config.js';
+import { loadConfig, configWarning } from './config.js';
 import { estimatePlan, renderEstimate, range, costLabel } from './estimate.js';
 import { handleClaudePreToolUse } from './hook.js';
 import { syncFromGitHub, applyEvents } from './sync.js';
@@ -75,6 +75,8 @@ export async function main(argv = process.argv.slice(2), io = { out: (s) => proc
     case 'status': {
       const st = getState(root);
       const plans = listPlans(root);
+      const cw = configWarning(loadConfig(root));
+      if (cw) io.err(`Warning: ${cw}`);
       if (!plans.length) { io.out('No plans yet. Use plan mode in Claude Code, or: lake-gate plan <file.md>'); return 0; }
       for (const p of plans) io.out(`${p.id === st.active ? '*' : ' '} ${describe(root, p)}`);
       return 0;
@@ -94,6 +96,8 @@ export async function main(argv = process.argv.slice(2), io = { out: (s) => proc
       const id = flag(args, '--plan') || getState(root).active;
       const plan = id && loadPlan(root, id);
       if (!plan) { io.err('lake-gate: no active plan.'); return 1; }
+      const cw = configWarning(loadConfig(root));
+      if (cw) io.err(`Warning: ${cw}`);
       const st = localStatus(root, plan);
       const ok = st.state === 'approved' || st.state === 'auto-approved';
       (ok ? io.out : io.err)(describe(root, plan));
