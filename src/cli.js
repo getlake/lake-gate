@@ -49,7 +49,7 @@ export async function main(argv = process.argv.slice(2), io = { out: (s) => proc
     }
     case 'plan': {
       const { plan, estimate } = exportPlan(root, readInput(args.find((a) => !a.startsWith('--') && a !== flag(args, '--id'))), { id: flag(args, '--id'), source: 'cli' });
-      io.out(`Saved .lake/plans/${plan.id}.md  version ${plan.short}  ${estimate.complexity}  est. ${range(estimate.usd)}`);
+      io.out(`Saved .lake/plans/${plan.id}.md  version ${plan.short}  ${estimate.complexity}  est. ${range(estimate.declared ? estimate.plannedUsd : estimate.usd)}${estimate.model ? ` on ${estimate.model.name}` : ""}`);
       io.out(`Approve on the PR with: /lake approve ${plan.id}@${plan.short}`);
       return 0;
     }

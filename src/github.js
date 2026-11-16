@@ -164,7 +164,12 @@ export async function publish(gh, ev, { comment = true } = {}) {
   await gh.req('POST', `/statuses/${ev.pr.head.sha}`, { state: ev.state, context: STATUS_CONTEXT, description: ev.description.slice(0, 140) });
   if (!comment || (!ev.results.length && ev.state === 'success' && !/Warning/.test(ev.description))) return;
   const body = renderSummary(ev);
-  const existing = (await gh.all(`/issues/${ev.pr.number}/comments`)).find((c) => c.user.type === 'Bot' && String(c.body).startsWith(MARKER));
-  if (existing) { if (existing.body !== body) await gh.req('PATCH', `/issues/comments/${existing.id}`, { body }); }
-  else await gh.req('POST', `/issues/${ev.pr.number}/comments`, { body });
+  try {
+    const existing = (await gh.all(`/issues/${ev.pr.number}/comments`)).find((c) => c.user.type === 'Bot' && String(c.body).startsWith(MARKER));
+    if (existing) { if (existing.body !== body) await gh.req('PATCH', `/issues/comments/${existing.id}`, { body }); }
+    else await gh.req('POST', `/issues/${ev.pr.number}/comments`, { body });
+  } catch (e) {
+    // The status check above is what matters. A missing summary comment shouldn't fail the gate.
+    console.log(`::warning::lake-gate couldn't post the summary comment (${String(e.message).slice(0, 120)}). Give the workflow "pull-requests: write" (see templates/lake-gate.yml).`);
+  }
 }

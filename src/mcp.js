@@ -35,7 +35,7 @@ export const TOOLS = [
     inputSchema: S({ plan_markdown: str('Full revised plan in markdown'), plan_id: str('Plan id (defaults to the active plan)'),
       thread_id: str('Accept this reviewer suggestion thread'), suggestion_id: str('Apply this Lake suggestion, e.g. models-2-4, cap-12, drop-5'), model: str('Run the whole plan on this model, e.g. sonnet'),
       addressed_threads: { type: 'array', items: { type: 'string' }, description: 'Thread ids this revision addresses (marked resolved)' },
-      note: str('What changed, for reviewers'), push: { type: 'boolean', description: 'Commit only the plan file and push' } }), annotations: { openWorldHint: true } },
+      note: str('What changed, for reviewers'), push: { type: 'boolean', description: 'Commit only the plan file and push (default on when applying a suggestion)' } }), annotations: { openWorldHint: true } },
   { name: 'lake_review', description: 'As a reviewer, act on a plan PR: approve, request_changes, comment (optionally on lines), reply (in a thread) or suggest (a structured change the author accepts in one click: suggestion_id or model). approve and request_changes post as the human GitHub account on this machine: ONLY use them when the user explicitly said so in this conversation, and pass the exact version they saw.',
     inputSchema: S({ action: { type: 'string', enum: ['approve', 'request_changes', 'comment', 'reply', 'suggest'] }, plan_id: str('Plan id'), version: str('8-character version (approve / request_changes)'),
       text: str('Comment, reply, or verdict note (required for request_changes)'), line: { type: 'number', description: 'First plan line to anchor a comment' }, end_line: { type: 'number' },
@@ -227,7 +227,7 @@ export async function callTool(ctx, name, a = {}) {
       return `Commented on ${id} v${model.short}, line ${s}${e > s ? `–${e}` : ''}.`;
     }
     case '_approve': case '_changes': {
-      const id = a.plan_id;
+      const id = resolveId(ctx, a.plan_id);
       const { number, model } = await prModel(ctx, id);
       if (!model) throw new Error(`No open PR with plan ${id}.`);
       const v = String(a.version || '').toLowerCase();
@@ -243,7 +243,7 @@ export async function callTool(ctx, name, a = {}) {
       return `Plan ${id} v${plan.short}\n` + formatCost(est, cfg, undefined, est.exposure > (cfg.budget?.approverAbove ?? Infinity) ? { required: true, exposure: est.exposure, threshold: cfg.budget.approverAbove, approvers: (cfg.budget.approvers || []).map((x) => String(x).replace(/^@/, '')), satisfied: false } : null);
     }
     case '_suggest': {
-      const { number, model, config } = await prModel(ctx, a.plan_id);
+      const { number, model, config } = await prModel(ctx, resolveId(ctx, a.plan_id));
       if (!model) throw new Error(`No open PR with plan ${a.plan_id}.`);
       const s = patchFor(a, model.estimate, config);
       await actions.suggest(ctx.github(), number, { planId: model.id, version: model.digest, title: s.title, patch: s.patch, saving: s.saving, text: a.comment, via });
@@ -262,10 +262,11 @@ export async function callTool(ctx, name, a = {}) {
       } else s = patchFor(a, estimatePlan(plan.body, cfg), cfg);
       const next = applyPatch(stripEstimate(plan.body).replace(/\s+$/, '') + '\n', s.patch);
       const { plan: np, estimate } = exportPlan(ctx.root, next, { id, source: 'mcp' });
+      const push = a.push ?? true; // one click: apply, commit only the plan file, push
       let note = '';
-      if (a.push) note = '\n' + pushPlan(ctx, id, `Plan ${id}: ${s.title || describePatch(s.patch, cfg)} (v${np.short})`);
+      if (push) note = '\n' + pushPlan(ctx, id, `Plan ${id}: ${s.title || describePatch(s.patch, cfg)} (v${np.short})`);
       if (a.thread_id && number) await ctx.github().req('POST', `/issues/${number}/comments`, { body: acceptBody({ planId: id, thread: a.thread_id, title: s.title, newVersion: np.digest, via }) });
-      return `Applied "${s.title}" to ${id}: new version v${np.short}, ${range(estimate.declared ? estimate.plannedUsd : estimate.usd)}.${note}${a.push ? '' : ' Push the plan file so reviewers see it.'} Earlier approvals no longer apply.`;
+      return `Applied "${s.title}" to ${id}: new version v${np.short}, ${range(estimate.declared ? estimate.plannedUsd : estimate.usd)}.${note}${push ? '' : ' Push the plan file so reviewers see it.'} Earlier approvals no longer apply.`;
     }
     default: throw new Error(`Unknown tool ${name}`);
   }

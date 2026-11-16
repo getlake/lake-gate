@@ -6,7 +6,7 @@ branding:
   color: green
 inputs:
   token:
-    description: GitHub token with statuses:write and issues:write (the default GITHUB_TOKEN works).
+    description: GitHub token with statuses:write and pull-requests:write (the default GITHUB_TOKEN works).
     required: false
     default: ${{ github.token }}
   comment:
