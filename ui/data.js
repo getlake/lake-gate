@@ -6,7 +6,7 @@
 import { client } from './core/github.js';
 import { loadWorkspace, loadPr, actions, viewer as whoami } from './core/workspace.js';
 import { buildPlanReview, versionsFromSnapshots } from './core/review.js';
-import { parseConfig } from './core/config-core.js';
+import { safeParseConfig } from './core/config-core.js';
 import { demoWorkspace, demoPost, demoReset, VIEWER, PEOPLE } from './demo.js';
 import { commentBody, replyBody, resolveBody, verdictBody, suggestionBody, acceptBody } from './core/review.js';
 import { demoAccept } from './demo.js';
@@ -34,12 +34,12 @@ export function demoSource() {
   };
 }
 
-function ghSource({ repo, gh, mode, extraPlans }) {
+function ghSource({ repo, gh, mode, extraPlans, canAuth = true }) {
   let ws = null; let me = null;
   return {
     mode, repo, people: {}, get canWrite() { return !!me; }, get viewer() { return me; },
     async load() {
-      me = me || (await whoami(gh))?.login || null;
+      me = me || (canAuth ? (await whoami(gh))?.login : null) || null; // no token: don't ask GitHub who we are
       const r = await loadWorkspace(gh, { state: 'all', limit: 20 });
       const local = extraPlans ? await extraPlans(r.plans) : [];
       ws = { repo, plans: [...r.plans, ...local], viewer: me, people: {}, mode };
@@ -57,7 +57,7 @@ function ghSource({ repo, gh, mode, extraPlans }) {
 export function githubSource(repo) {
   const token = tokenStore.get();
   const gh = client({ token: token || undefined, repo, fetchImpl: (u, o) => fetch(u, o) });
-  return ghSource({ repo, gh, mode: 'github' });
+  return ghSource({ repo, gh, mode: 'github', canAuth: !!token });
 }
 
 export async function localSource() {
@@ -70,7 +70,7 @@ export async function localSource() {
   // Local plans not on any PR (or edited locally) show as drafts.
   const extraPlans = async (prPlans) => {
     const local = await fetchImpl('/api/local').then((r) => r.json());
-    const config = parseConfig(local.config);
+    const config = safeParseConfig(local.config);
     const out = [];
     for (const lp of local.plans) {
       const versions = versionsFromSnapshots(lp.snapshots, lp.id);

@@ -1,4 +1,4 @@
-import { normalizeBody } from './plan.js';
+import { forEstimator } from './plan.js';
 import { analyzePlan, scoreStep, PRICES } from './meter-core.js';
 import { applyDeclarations } from './models.js';
 
@@ -21,7 +21,7 @@ export function pricesFor(config) {
 }
 export function estimatePlan(body, config) {
   const prices = pricesFor(config);
-  const a = analyzePlan(normalizeBody(body), prices, { provider: config.provider || 'anthropic' });
+  const a = analyzePlan(forEstimator(body), prices, { provider: config.provider || 'anthropic' });
   const steps = a.steps.map((s) => ({ n: s.n, title: s.title.replace(/\s*[([]\s*model\s*:\s*[^)\]]+[)\]]/i, '').slice(0, 90), complexity: levelToComplexity(s.complexity), level: s.complexity, reasons: s.reasons, tier: s.tier,
     model: s.modelLabel, modelKey: s.model, tokens: prices.assumptions.stepTokens[String(s.complexity)], usd: s.usd, frontierUsd: s.baselineUsd }));
   const maxC = steps.reduce((m, s) => (complexityRank(s.complexity) > complexityRank(m) ? s.complexity : m), 'low');
@@ -35,17 +35,23 @@ export function estimatePlan(body, config) {
   }, body, config);
 }
 
-export const money = (n) => (n < 0.01 ? '<$0.01' : n < 0.1 ? `$${n.toFixed(3)}` : n < 10 ? `$${n.toFixed(2)}` : `$${Math.round(n)}`);
+export const money = (n) => (n < 0.01 ? '<$0.01' : n < 0.1 ? `$${n.toFixed(3)}` : n < 10 ? `$${n.toFixed(2)}` : `$${Math.round(n).toLocaleString('en-US')}`);
 export const range = ([a, b]) => (b < 0.01 ? '<$0.01' : `${money(a)}–${money(b)}`);
 // Which model the cost is for: one plan model, or per-step picks on top of a default.
 export const mixedModels = (est) => !!est.declared && est.steps.some((s) => s.planned && s.planned.name !== est.model?.name);
 export const modelLabel = (est) => (mixedModels(est) ? (est.model ? ` · planned per step (default ${est.model.name})` : ' · planned per step') : est.model ? ` on ${est.model.name}` : '');
 export const costLabel = (est) => `${range(est.declared ? est.plannedUsd : est.usd)}${modelLabel(est)}`;
 
-export function autoApproveVerdict(est, config) {
+// ctx (optional): codeLines = changed lines of code outside .lake/ (PR diff, or local diff for the hook);
+// gatedBefore = an earlier version of this plan needed a human (shrinking a plan never earns an auto pass).
+export function autoApproveVerdict(est, config, ctx = {}) {
   const a = config.autoApprove || {};
   if (!a.mode || a.mode === 'off') return { eligible: false, mode: 'off', reasons: [] };
   const reasons = [];
+  if (!est.steps.length) reasons.push('no steps');
+  if (ctx.gatedBefore) reasons.push('an earlier version of this plan needed a human');
+  const maxLines = a.maxCodeLines ?? 150;
+  if (ctx.codeLines != null && ctx.codeLines > maxLines) reasons.push(`${ctx.codeLines} changed lines of code > ${maxLines}`);
   const top = est.exposure ?? est.usd[1];
   if (top > a.maxUsd) reasons.push(`upper estimate ${money(top)} > ${money(a.maxUsd)}`);
   if (config.budget?.approverAbove != null && top > config.budget.approverAbove) reasons.push('needs budget approval');

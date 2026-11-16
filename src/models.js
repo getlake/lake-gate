@@ -4,7 +4,7 @@
 //   3. Rename the flag (model: haiku)   (one step)
 //   Budget cap: $12              (the run stops here; budget approval looks at the cap, not the upper estimate)
 // Steps marked "(optional)" can be dropped by a suggestion.
-import { stripEstimate, normalizeBody } from './plan.js';
+import { stripEstimate, normalizeBody, forEstimator } from './plan.js';
 import { splitPlan, costOfBudget, resolveModel as meterResolve } from './meter-core.js';
 import { pricesFor } from './estimate.js';
 
@@ -70,7 +70,7 @@ export function applyDeclarations(est, body, config) {
   const notes = [];
   if (d.model && !planModel) notes.push(`Unknown model "${d.model}". Add it to "catalog" in .lake/config.json to price it.`);
   const prices = pricesFor(config); const cat = catalogOf(config);
-  const raw = splitPlan(normalizeBody(body)).map((x) => ({ text: `${x.title}\n${x.body || ''}` }));
+  const raw = splitPlan(forEstimator(body)).map((x) => ({ text: `${x.title}\n${x.body || ''}` }));
   const steps = est.steps.map((s, i) => {
     const tag = stepModelTag(raw[i]?.text || '');
     const tagged = tag ? resolveModel(tag, config) : null;

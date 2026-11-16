@@ -28,13 +28,17 @@ Usage:
 No telemetry. No backend. Docs: https://github.com/getlake/lake-gate`;
 
 const flag = (args, name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
-const readInput = (f) => (f === '-' || !f ? fs.readFileSync(0, 'utf8') : fs.readFileSync(f, 'utf8'));
+const readInput = (f) => {
+  if (f === '-' || !f) return fs.readFileSync(0, 'utf8');
+  if (!fs.existsSync(f)) throw new Error(`File not found: ${f}`);
+  return fs.readFileSync(f, 'utf8');
+};
 
 function describe(root, plan) {
   const st = localStatus(root, plan);
   const extra = st.state === 'pending' ? (st.stale ? ' (approval is for an older version)' : '') + (loadConfig(root).try ? '\n  approve locally: npx lake-gate approve' : `\n  approve on the PR: /lake approve ${plan.id}@${plan.short}`) : st.approvers?.length ? ` by ${st.approvers.map((a) => '@' + a).join(', ')}` : '';
   const e = st.estimate;
-  return `${plan.id}  v${plan.short}  ${e.complexity}  est. ${costLabel(e)}  ${st.state}${st.trial ? ' (trial, local only)' : ''}${extra}`;
+  return `${plan.id}  v${plan.short}  ${e.complexity}  est. ${costLabel(e)}  ${st.state === 'pending' ? 'in review' : st.state}${st.trial ? ' (trial, local only)' : ''}${extra}`;
 }
 
 export async function main(argv = process.argv.slice(2), io = { out: (s) => process.stdout.write(s + '\n'), err: (s) => process.stderr.write(s + '\n') }) {
@@ -114,13 +118,20 @@ export async function main(argv = process.argv.slice(2), io = { out: (s) => proc
     }
     case 'hook': {
       if (args[0] !== 'claude') { io.err('Supported: lake-gate hook claude'); return 1; }
-      const input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}');
-      const res = handleClaudePreToolUse(input);
+      let input = {}; try { input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch { /* not JSON: no opinion */ }
+      let res;
+      // Never brick the agent on an unexpected hook error: say what happened and let this call through.
+      try { res = handleClaudePreToolUse(input); } catch (e) { res = { systemMessage: `lake-gate hook error (this call was not gated): ${e.message}` }; }
       if (res) io.out(JSON.stringify(res));
       return 0;
     }
     case 'ui': {
-      const r = await startUi({ root, port: Number(flag(args, '--port') || 4848), open: !args.includes('--no-open') });
+      const port = Number(flag(args, '--port') || 4848);
+      let r;
+      try { r = await startUi({ root, port, open: !args.includes('--no-open') }); } catch (e) {
+        if (/EADDRINUSE/.test(e.message)) { io.err(`lake-gate: port ${port} is busy (another \`lake-gate ui\`?). Try: npx lake-gate ui --port ${port + 1}`); return 1; }
+        throw e;
+      }
       io.out(`Lake review UI: ${r.url}`);
       io.out(r.repo ? `Repo ${r.repo}. ${r.hasToken ? 'Posting as your GitHub login (token stays on this machine).' : 'No GitHub token found: read-only for public repos. Run `gh auth login` to post.'}` : 'No GitHub remote: showing local plans only.');
       io.out('Ctrl+C to stop.');

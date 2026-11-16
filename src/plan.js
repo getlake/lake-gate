@@ -88,3 +88,7 @@ export function readPlanText(text, fallbackId) {
   const digest = digestOf(body);
   return { id: meta.id || fallbackId, title: meta.title || titleOf(body), meta, body, digest, short: digest.slice(0, 8) };
 }
+
+// Text handed to the shared estimator: a blank line after headings, so a list right under a "# Title"
+// line is read as steps (the estimator otherwise sees a one-item list there as part of the heading block).
+export const forEstimator = (body) => normalizeBody(body).replace(/^(#{1,6}\s.*)\n(?=\S)/gm, '$1\n\n');

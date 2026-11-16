@@ -1,6 +1,6 @@
-import { parseConfig } from './config-core.js';
+import { parseConfig, safeParseConfig } from './config-core.js';
 import { readPlanText } from './plan.js';
-import { estimatePlan, range, money, costLabel } from './estimate.js';
+import { estimatePlan, range, money, costLabel, autoApproveVerdict } from './estimate.js';
 import { evaluatePlan, isPassing, parseCommands } from './policy.js';
 import { expandEvents } from './review.js';
 import { costSuggestions } from './models.js';
@@ -47,7 +47,7 @@ export function client({ token, repo, api = 'https://api.github.com', fetchImpl 
 export async function collectEvents(gh, number) {
   const [comments, reviews] = await Promise.all([gh.all(`/issues/${number}/comments`), gh.all(`/pulls/${number}/reviews`)]);
   return [
-    ...comments.map((c) => ({ login: c.user.login, type: c.user.type, association: c.author_association, body: c.body, createdAt: c.created_at, source: 'comment', id: c.id })),
+    ...comments.filter((c) => !String(c.body || '').startsWith(MARKER)).map((c) => ({ login: c.user.login, type: c.user.type, association: c.author_association, body: c.body, createdAt: c.created_at, source: 'comment', id: c.id })),
     ...reviews.filter((r) => r.state !== 'DISMISSED').map((r) => ({ login: r.user.login, type: r.user.type, association: r.author_association, body: r.body, createdAt: r.submitted_at, source: 'review', id: r.id, state: r.state, commitId: r.commit_id })),
   ];
 }
@@ -88,14 +88,38 @@ export async function resolveBudgetApprovers(gh, config) {
 const isPlanPath = (f) => /^\.lake\/plans\/[^/]+\.md$/.test(f) && !f.endsWith('/README.md');
 const isCodePath = (f) => !f.startsWith('.lake/') && !/\.(md|txt)$/i.test(f) && !f.startsWith('docs/');
 
-// Evaluates every plan file touched by the PR. Config is read from the BASE branch so a PR cannot loosen its own policy.
+// Lines changed outside .lake/ in a PR: auto-approve only covers small diffs.
+export const codeLinesOf = (files) => files.filter((f) => !f.filename.startsWith('.lake/')).reduce((n, f) => n + (f.additions || 0) + (f.deletions || 0), 0);
+
+// The team's policy: .lake/config.json at the HEAD of the base branch (pr.base.ref), not at the commit the PR
+// branched from, so tightening policy on main applies to open PRs at once. A PR still can't loosen its own policy.
+export async function loadBaseConfig(gh, pr) {
+  const text = await gh.file('.lake/config.json', pr.base.ref).catch(() => null) ?? await gh.file('.lake/config.json', pr.base.sha);
+  return safeParseConfig(text, `.lake/config.json on ${pr.base.ref}`);
+}
+
+// Did an earlier version of this plan in the PR need a human? Then a shrunk version can't auto-approve.
+async function gatedBefore(gh, path, pr, prCommits, config, headDigest) {
+  if ((config.autoApprove?.mode || 'off') === 'off') return false;
+  const touching = ((await gh.req('GET', `/commits?sha=${encodeURIComponent(pr.head.sha)}&path=${encodeURIComponent(path)}&per_page=20`)) || []).map((c) => c.sha).filter((s) => prCommits.has(s) && s !== pr.head.sha).slice(0, 10);
+  for (const sha of touching) {
+    const t = await gh.file(path, sha); if (t == null) continue;
+    const p = readPlanText(t); if (p.digest === headDigest) continue;
+    if (!autoApproveVerdict(estimatePlan(p.body, config), config).eligible) return true;
+  }
+  return false;
+}
+
+// Evaluates every plan file touched by the PR, with the base branch's current policy.
 export async function evaluatePr(gh, number) {
   const pr = await gh.req('GET', `/pulls/${number}`);
-  const config = parseConfig(await gh.file('.lake/config.json', pr.base.sha));
+  const config = await loadBaseConfig(gh, pr);
   const files = await gh.all(`/pulls/${number}/files`);
   const planFiles = files.filter((f) => isPlanPath(f.filename) && f.status !== 'removed').map((f) => f.filename);
   const codeChanged = files.some((f) => isCodePath(f.filename));
-  const events = await collectEvents(gh, number);
+  const codeLines = codeLinesOf(files);
+  const prCommits = new Set((await gh.all(`/pulls/${number}/commits`)).map((c) => c.sha));
+  const events = (await collectEvents(gh, number));
   const budgetApprovers = await resolveBudgetApprovers(gh, config);
   const results = [];
   for (const p of planFiles) {
@@ -105,7 +129,8 @@ export async function evaluatePr(gh, number) {
     const estimate = estimatePlan(plan.body, config);
     const digestAt = await nativeDigests(gh, events, p, { headSha: pr.head.sha, headText: text, config });
     const planEvents = expandEvents(events.map((e) => ({ ...e, id: `${e.source}${e.id}` })), { planId: plan.id, digestAt, config });
-    results.push({ ...evaluatePlan({ plan, estimate, events: planEvents, prAuthor: pr.user.login, config, budgetApprovers }), title: plan.title, path: p, estimate });
+    const autoContext = { codeLines, gatedBefore: await gatedBefore(gh, p, pr, prCommits, config, plan.digest) };
+    results.push({ ...evaluatePlan({ plan, estimate, events: planEvents, prAuthor: pr.user.login, config, budgetApprovers, autoContext }), title: plan.title, path: p, estimate });
   }
   return { pr, config, results, codeChanged, repo: gh.repo, ...summarize(results, codeChanged, config) };
 }
@@ -126,6 +151,7 @@ export function summarize(results, codeChanged, config) {
 
 export function renderSummary(ev) {
   const lines = [MARKER, '### Lake plan gate', ''];
+  if (ev.config?.configError) lines.push(`> **Warning:** ${ev.config.configError}. lake-gate is using its default policy until it's fixed.`, '');
   if (!ev.results.length) { lines.push(ev.description + '.'); return lines.join('\n'); }
   lines.push('| Plan | Version | Status | Complexity | Est. cost |', '|---|---|---|---|---|');
   for (const r of ev.results) {
@@ -141,7 +167,7 @@ export function renderSummary(ev) {
     lines.push('', `> **Warning:** couldn't read ${r.budget.unreadable.join(', ')} with this token, so ${r.budget.fallback === 'owner' ? 'the repo owner' : 'repo admins'} and any listed login can give the budget approval. List GitHub logins in \`budget.approvers\` (e.g. \`["alice","bob"]\`) to fix this.`);
   }
   for (const r of ev.results.filter((x) => x.budget?.required)) {
-    lines.push('', `**Budget approval** for \`${r.id}\`: up to ${money(r.budget.exposure)} is above the team threshold of ${money(r.budget.threshold)}. ${r.budget.satisfied ? `Approved by @${r.budget.approvedBy.join(', @')} for v${r.short}.` : `One of ${[...r.budget.approvers.map((a) => '@' + a), ...(r.budget.fallback === 'owner' ? ['the repo owner'] : [])].join(', ') || r.budget.teams.join(', ')} must approve v${r.short} too.`}`);
+    lines.push('', `**Budget approval** for \`${r.id}\`: up to ${money(r.budget.exposure)} is above the team threshold of ${money(r.budget.threshold)}. ${r.budget.satisfied ? `Approved by @${r.budget.approvedBy.join(', @')} for v${r.short}.` : `${(() => { const who = [...r.budget.approvers.map((a) => '@' + a), ...(r.budget.fallback === 'owner' ? ['the repo owner'] : [])]; return who.length === 1 ? who[0] : who.length ? `One of ${who.join(', ')}` : `One of ${r.budget.teams.join(', ')}`; })()} must approve v${r.short} too.`}`);
   }
   for (const r of ev.results) {
     const sugg = costSuggestions(r.estimate, ev.config || {});
@@ -153,7 +179,7 @@ export function renderSummary(ev) {
     const base = ev.config?.reviewUrl;
     if (base && ev.repo && ev.pr?.number) {
       const img = (n, alt) => `![${alt}](${base}btn/${n}.svg)`;
-      lines.push('', '**Review in one click** (opens the Lake review page; posting needs a GitHub token the first time, or use GitHub\'s own Review changes → Approve):', '');
+      lines.push('', '**Review in one click** (opens the Lake review page; posting needs a GitHub token the first time):', '');
       for (const r of pending) {
         const link = (act) => `${base}#/pr/${ev.repo}/${ev.pr.number}/${encodeURIComponent(r.id)}${act ? `?do=${act}&v=${r.short}` : ''}`;
         lines.push(`${pending.length > 1 ? `\`${r.id}\` ` : ''}[${img('approve', `Approve v${r.short}`)}](${link('approve')}) [${img('changes', 'Request changes')}](${link('changes')}) [${img('open', 'Open plan review')}](${link('')})`, '');
@@ -165,13 +191,15 @@ export function renderSummary(ev) {
   }
   const shadow = ev.results.filter((r) => r.auto.mode === 'shadow' && r.auto.eligible && !isPassing(r));
   if (shadow.length) lines.push('', `Shadow auto-approve: ${shadow.map((r) => r.id).join(', ')} would pass the auto-approve policy. It is in shadow mode, so a human still decides.`);
-  const notes = ev.results.flatMap((r) => r.notes);
+  // Only what concerns the current versions: stale-version commands are expected history, not news.
+  const notes = ev.results.flatMap((r) => r.notes.filter((n) => !/refers to version/.test(n)));
   if (notes.length) lines.push('', '<details><summary>Ignored commands</summary>', '', ...notes.map((n) => `- ${n}`), '', '</details>');
   return lines.join('\n');
 }
 
 export async function publish(gh, ev, { comment = true } = {}) {
-  await gh.req('POST', `/statuses/${ev.pr.head.sha}`, { state: ev.state, context: STATUS_CONTEXT, description: ev.description.slice(0, 140) });
+  const target = ev.config?.reviewUrl && ev.repo && ev.pr?.number ? `${ev.config.reviewUrl}#/pr/${ev.repo}/${ev.pr.number}${ev.results[0] ? `/${encodeURIComponent(ev.results[0].id)}` : ''}` : undefined;
+  await gh.req('POST', `/statuses/${ev.pr.head.sha}`, { state: ev.state, context: STATUS_CONTEXT, description: ev.description.slice(0, 140), ...(target ? { target_url: target } : {}) });
   if (!comment || (!ev.results.length && ev.state === 'success' && !/Warning/.test(ev.description))) return;
   const body = renderSummary(ev);
   try {

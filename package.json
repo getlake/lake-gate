@@ -1,6 +1,7 @@
 {
   "name": "lake-gate",
-  "version": "0.2.2",
+  "version": "0.2.3",
+  "mcpName": "io.github.getlake/lake-gate",
   "description": "Version-bound team plan approval for AI coding agents: review UI, Claude Code hook, MCP server, GitHub Action. No backend, no telemetry.",
   "type": "module",
   "bin": {

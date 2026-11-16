@@ -39,3 +39,15 @@ test('shared estimator is in sync with lake-meter when both checkouts are presen
   const m = src.match(/export const PRICES = (\{[\s\S]*?\n\});/);
   assert.deepEqual(JSON.parse(m[1]), JSON.parse(fs.readFileSync(meter, 'utf8')), 'run node scripts/sync-meter.mjs ../exp-a-meter');
 });
+
+test('MCP Registry metadata matches the package', async () => {
+  const fs = await import('node:fs');
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const srv = JSON.parse(fs.readFileSync(new URL('../server.json', import.meta.url), 'utf8'));
+  assert.equal(pkg.mcpName, 'io.github.getlake/lake-gate');
+  assert.equal(srv.name, pkg.mcpName);
+  assert.equal(srv.version, pkg.version);
+  assert.equal(srv.packages[0].version, pkg.version);
+  assert.equal(srv.packages[0].identifier, pkg.name);
+  assert.ok(srv.description.length <= 100);
+});

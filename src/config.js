@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseConfig } from './config-core.js';
+import { safeParseConfig, parseConfig } from './config-core.js';
 
-export { DEFAULT_CONFIG, merge, parseConfig } from './config-core.js';
+export { DEFAULT_CONFIG, merge, parseConfig, safeParseConfig, ConfigError } from './config-core.js';
 
-export function loadConfig(root) {
+// Never throws on a broken file: defaults apply and config.configError explains (file, line, column).
+export function loadConfig(root, { strict = false } = {}) {
   const p = path.join(root, '.lake', 'config.json');
-  return parseConfig(fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null);
+  const text = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
+  return strict ? parseConfig(text) : safeParseConfig(text);
 }

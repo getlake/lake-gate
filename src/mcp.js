@@ -10,7 +10,7 @@ import { repoRoot, loadPlan, getState, exportPlan, listPlans, localStatus } from
 import { client } from './github.js';
 import { parseRemote, applyEvents } from './sync.js';
 import { collectEvents, nativeDigests } from './github.js';
-import { loadPr, actions } from './workspace.js';
+import { loadPr, actions, viewer } from './workspace.js';
 import { loadConfig } from './config.js';
 import { range, money, estimatePlan, costLabel, mixedModels } from './estimate.js';
 import { costSuggestions, modelOptions, applyPatch, resolveModel, describePatch, budgetRule } from './models.js';
@@ -233,13 +233,17 @@ export async function callTool(ctx, name, a = {}) {
       const { number, model } = await prModel(ctx, id);
       if (!model) throw new Error(`No PR with plan ${id}.`);
       const lines = String(model.body).split('\n'); const s = Math.max(1, Math.floor(a.line)); const e = Math.max(s, Math.floor(a.end_line || s));
+      const last = stripEstimate(String(model.body)).replace(/\s+$/, '').split('\n').length;
+      if (!Number.isFinite(s) || e > last) return `Not posted: line ${Number.isFinite(e) ? e : a.line} is outside the plan (lines 1–${last}). Call lake_review_status for the numbered plan text.`;
       await actions.comment(ctx.github(), number, { planId: id, version: model.digest, anchor: { start: s, end: e, quote: lines.slice(s - 1, e).join('\n') }, text: a.text, via });
       return `Commented on ${id} v${model.short}, line ${s}${e > s ? `–${e}` : ''}.`;
     }
     case '_approve': case '_changes': {
       const id = resolveId(ctx, a.plan_id);
-      const { number, model } = await prModel(ctx, id);
+      const { number, model, pr } = await prModel(ctx, id);
       if (!model) throw new Error(`No open PR with plan ${id}.`);
+      const me = (await viewer(ctx.github()))?.login;
+      if (me && pr?.user?.login && me.toLowerCase() === pr.user.login.toLowerCase()) return `Not posted: you (@${me}) opened PR #${number}, and authors can't ${name === '_approve' ? 'approve' : 'review'} their own plan. A teammate has to do it.`;
       const v = String(a.version || '').toLowerCase();
       if (v.length < 7 || !model.digest.startsWith(v)) return `Not posted: version ${a.version || '(none)'} is not the current version of ${id}. The current version is ${model.short}. Show the user what changed and ask again.`;
       if (name === '_changes' && !String(a.comment || '').trim()) return 'Not posted: say what needs to change.';
@@ -268,9 +272,11 @@ export async function callTool(ctx, name, a = {}) {
         const r = await prModel(ctx, id); number = r.number;
         const t = r.model?.threads.find((x) => x.id === a.thread_id);
         if (!t?.suggestion) throw new Error(`Thread ${a.thread_id} is not a suggestion.`);
+        if (t.suggestion.accepted) return `Already applied${t.suggestion.newVersion ? ` (v${String(t.suggestion.newVersion).slice(0, 8)})` : ''}. Nothing to do.`;
         s = { title: t.suggestion.title, patch: t.suggestion.patch };
       } else s = patchFor(a, estimatePlan(plan.body, cfg), cfg);
       const next = applyPatch(stripEstimate(plan.body).replace(/\s+$/, '') + '\n', s.patch);
+      if (next.trim() === stripEstimate(plan.body).trim()) return `Already applied: ${id} v${plan.short} already has "${s.title || describePatch(s.patch, cfg)}". Nothing to do.`;
       const { plan: np, estimate } = exportPlan(ctx.root, next, { id, source: 'mcp' });
       const push = a.push ?? true; // one click: apply, commit only the plan file, push
       let note = '';

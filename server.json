@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.getlake/lake-gate",
+  "title": "lake-gate",
+  "description": "Plan review for coding agents: request review, wait for a version-bound approval, revise.",
+  "repository": {
+    "url": "https://github.com/getlake/lake-gate",
+    "source": "github"
+  },
+  "websiteUrl": "https://getlake.github.io/lake-gate/",
+  "version": "0.2.3",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "lake-gate",
+      "version": "0.2.3",
+      "transport": { "type": "stdio" },
+      "packageArguments": [{ "type": "positional", "value": "mcp" }]
+    }
+  ]
+}

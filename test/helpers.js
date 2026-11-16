@@ -22,9 +22,9 @@ Context: deliveries fail silently today.
 4. Add replay and failure tests
 `;
 
-export function fakeGitHub({ prAuthor = 'maya', files = [], contents = {}, baseConfig = '{"autoApprove":{"mode":"shadow"}}', comments = [], reviews = [] } = {}) {
+export function fakeGitHub({ prAuthor = 'maya', files = [], contents = {}, baseConfig = '{"autoApprove":{"mode":"shadow"}}', baseShaConfig, comments = [], reviews = [], fileStats = {} } = {}) {
   const calls = [];
-  const pr = { number: 7, user: { login: prAuthor }, head: { sha: 'headsha' }, base: { sha: 'basesha' } };
+  const pr = { number: 7, user: { login: prAuthor }, head: { sha: 'headsha' }, base: { sha: 'basesha', ref: 'main' } };
   const json = (v, status = 200) => ({ ok: status < 400, status, json: async () => v, text: async () => JSON.stringify(v) });
   const fetchImpl = async (url, opts) => {
     const u = new URL(url); const p = u.pathname.replace('/repos/acme/app', ''); const m = opts.method;
@@ -32,12 +32,14 @@ export function fakeGitHub({ prAuthor = 'maya', files = [], contents = {}, baseC
     const page = Number(u.searchParams.get('page') || 1);
     const list = (arr) => json(page === 1 ? arr : []);
     if (m === 'GET' && p === '/pulls/7') return json(pr);
-    if (m === 'GET' && p === '/pulls/7/files') return list(files.map((f) => ({ filename: f, status: 'modified' })));
+    if (m === 'GET' && p === '/pulls/7/files') return list(files.map((f) => ({ filename: f, status: 'modified', ...(fileStats[f] || {}) })));
     if (m === 'GET' && p === '/issues/7/comments') return list(comments);
+    if (m === 'GET' && p === '/pulls/7/commits') return list([]);
+    if (m === 'GET' && p === '/commits') return json([]);
     if (m === 'GET' && p === '/pulls/7/reviews') return list(reviews);
     if (m === 'GET' && p.startsWith('/contents/')) {
       const f = decodeURIComponent(p.slice('/contents/'.length)); const ref = u.searchParams.get('ref');
-      const v = f === '.lake/config.json' ? (ref === 'basesha' ? baseConfig : contents[f + '@head-config']) : ref === 'headsha' ? contents[f] : null;
+      const v = f === '.lake/config.json' ? (ref === 'main' ? baseConfig : ref === 'basesha' ? (baseShaConfig ?? baseConfig) : contents[f + '@head-config']) : ref === 'headsha' ? contents[f] : null;
       return v == null ? json({ message: 'Not Found' }, 404) : json({ content: Buffer.from(v).toString('base64') });
     }
     if (m === 'GET' && p === '/pulls') return json([pr]);

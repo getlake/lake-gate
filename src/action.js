@@ -52,9 +52,19 @@ export async function relayCheckAction(gh, payload, ev) {
 export async function runAction(env = process.env, fetchImpl) {
   const payload = JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
   const number = prNumberFromEvent(env.GITHUB_EVENT_NAME, payload);
-  if (!number) { console.log('lake-gate: not a pull request event, nothing to do.'); return null; }
   const token = env.INPUT_TOKEN || env.GITHUB_TOKEN;
   const gh = client({ token, repo: env.GITHUB_REPOSITORY, api: env.GITHUB_API_URL || 'https://api.github.com', fetchImpl });
+  // Policy changed on the default branch: re-check every open PR into it, so tightened rules apply at once.
+  if (!number && env.GITHUB_EVENT_NAME === 'push') {
+    const branch = String(payload.ref || '').replace(/^refs\/heads\//, '');
+    const prs = (await gh.all(`/pulls?state=open&base=${encodeURIComponent(branch)}`)) || [];
+    console.log(`lake-gate: policy push to ${branch}: re-checking ${prs.length} open PR(s).`);
+    for (const pr of prs) {
+      try { await publish(gh, await evaluatePr(gh, pr.number), { comment: (env.INPUT_COMMENT || 'true') !== 'false' }); } catch (e) { console.log(`::warning::lake-gate: PR #${pr.number}: ${e.message}`); }
+    }
+    return null;
+  }
+  if (!number) { console.log('lake-gate: not a pull request event, nothing to do.'); return null; }
   let ev = await evaluatePr(gh, number);
   if (env.GITHUB_EVENT_NAME === 'check_run' && payload.action === 'requested_action') {
     const r = await relayCheckAction(gh, payload, ev);

@@ -193,7 +193,7 @@ function headingFor(body, line) {
 // ---- The model ----
 // plan: current plan ({id, title, body, digest, short, meta}); versions: chronological [{digest, body, at, sha, author, offset}]
 // events: normalized events (comments, reviews, line comments); digestAt: {commitSha: digest} for this plan's file
-export function buildPlanReview({ plan, versions = [], events = [], prAuthor = null, config, digestAt = {}, pr = null, requestedReviewers = [], budgetApprovers }) {
+export function buildPlanReview({ plan, versions = [], events = [], prAuthor = null, config, digestAt = {}, pr = null, requestedReviewers = [], budgetApprovers, autoContext }) {
   const vs = versions.length ? [...versions] : [];
   if (!vs.some((v) => v.digest === plan.digest)) vs.push({ ...plan, offset: plan.offset || 0, at: plan.at || null, author: plan.author || null });
   const byPrefix = (p) => (p ? vs.find((v) => v.digest.startsWith(String(p).toLowerCase())) : null);
@@ -201,7 +201,7 @@ export function buildPlanReview({ plan, versions = [], events = [], prAuthor = n
   const current = vs[vIndex(plan.digest)];
   const estimate = estimatePlan(plan.body, config);
   const expanded = expandEvents(events, { planId: plan.id, digestAt, config });
-  const policy = evaluatePlan({ plan, estimate, events: expanded, prAuthor, config, budgetApprovers });
+  const policy = evaluatePlan({ plan, estimate, events: expanded, prAuthor, config, budgetApprovers, autoContext });
   const sorted = [...events].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
   const expandedById = new Map(expanded.map((e) => [e.id, e]));
 

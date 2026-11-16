@@ -14,7 +14,7 @@ export function parseCommands(body) {
 }
 
 // events: [{ login, type: 'User'|'Bot', association, body, createdAt, source: 'comment'|'review' }]
-export function evaluatePlan({ plan, estimate, events, prAuthor, config, budgetApprovers }) {
+export function evaluatePlan({ plan, estimate, events, prAuthor, config, budgetApprovers, autoContext }) {
   const approvals = new Map();
   const blockers = new Map();
   const assoc = new Map();
@@ -38,7 +38,7 @@ export function evaluatePlan({ plan, estimate, events, prAuthor, config, budgetA
       else { blockers.set(who, ev.createdAt); approvals.delete(who); }
     }
   }
-  const auto = estimate ? autoApproveVerdict(estimate, config) : { eligible: false, mode: 'off', reasons: [] };
+  const auto = estimate ? autoApproveVerdict(estimate, config, autoContext) : { eligible: false, mode: 'off', reasons: [] };
   // Budget: above config.budget.approverAbove one of the budget approvers must approve this exact version too
   // (their approval also counts toward requiredApprovals).
   const rule = estimate ? budgetRule(estimate, config, budgetApprovers) : { required: false };

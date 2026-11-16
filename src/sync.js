@@ -22,7 +22,7 @@ export function applyEvents(root, { events, prAuthor, prNumber, digestAt = {} })
   for (const plan of listPlans(root)) {
     const planEvents = expandEvents(events.map((e, i) => ({ ...e, id: e.id ?? i })), { planId: plan.id, digestAt: digestAt[plan.id] || {}, config });
     const r = evaluatePlan({ plan, estimate: estimatePlan(plan.body, config), events: planEvents, prAuthor, config });
-    store[plan.id] = { digest: plan.digest, state: r.state, approvers: r.approvers, blockers: r.blockers, pr: prNumber ?? null, syncedAt: new Date().toISOString() };
+    store[plan.id] = { digest: plan.digest, state: r.state === 'auto-approved' ? 'pending' : r.state, approvers: r.approvers, blockers: r.blockers, pr: prNumber ?? null, syncedAt: new Date().toISOString() };
     results.push(r);
   }
   setApprovals(root, store);

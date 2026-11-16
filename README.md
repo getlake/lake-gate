@@ -12,7 +12,7 @@ lake-gate is a small, free, open-source plan gate for teams using Claude Code an
 - **Approve from where you already are.** The Lake review app, GitHub's own **Approve** button, or your agent chat (MCP server for Claude Code and Cursor). They all write to the same place, the PR, so there is one source of truth.
 - **Model and cost per step.** Every plan shows which model runs each step and what that costs, with the same estimator and price table as [lake-meter](https://getlake.github.io/lake-meter/). Declare the model in the plan (`Model: Opus 5.5`, or `(model: haiku)` on a step). Reviewers suggest a cheaper model, a dropped step or a cap, and the author accepts it in one click, which saves a new plan version.
 - **Budget approval (optional).** Above `budget.approverAbove` dollars, one of `budget.approvers` (GitHub logins) must also approve that exact version. It shows in the app, the PR check and the MCP tools.
-- **Small plans pass on their own.** Tiny, low-complexity plans are auto-approved by default, and quick fixes without a plan aren't gated at all. Set `autoApprove.mode` to `shadow` or `off` to be stricter.
+- **Small plans pass on their own.** Tiny, low-complexity plans with a small diff (150 changed lines by default) are auto-approved, and quick fixes without a plan aren't gated at all. Once any version of a plan needed a human, shrinking it doesn't earn an auto pass, and the agent can't edit files in `.lake/` directly. Set `autoApprove.mode` to `shadow` or `off` to be stricter.
 
 ## Install (about 10 minutes)
 
@@ -29,6 +29,8 @@ Trying it alone first? `npx lake-gate init --try` sets up a local-only trial whe
 Then in GitHub: **Settings → Branches → branch protection → Require status checks → `lake/plan-approval`** (the check appears after the first PR runs).
 
 Requirements: Node 18.17+, git, a GitHub repo. macOS/Linux shells for the hook (Windows: use WSL for now).
+
+**PRs opened by an agent or bot with the workflow's `GITHUB_TOKEN`** don't trigger other workflows, and GitHub may hold the Lake run as "Approval required" until a maintainer approves it, so `lake/plan-approval` doesn't appear. Open agent PRs with a personal token or a GitHub App token, or push one commit as a human.
 
 ## The flow
 
@@ -64,13 +66,13 @@ Everything is stored on the PR as normal comments and reviews. There's no databa
 
 The typed `/lake approve <id>@<version>` line still works everywhere.
 
-**Your agent (MCP).** `init` registers `npx lake-gate mcp` in `.mcp.json` (Claude Code) and `.cursor/mcp.json` (Cursor). Tools:
+**Your agent (MCP).** `init` registers `npx -y lake-gate@0 mcp` in `.mcp.json` (Claude Code) and `.cursor/mcp.json` (Cursor). Tools:
 
 | Tool | What it does |
 |---|---|
 | `lake_request_review` | Save the plan (with model and cost), optionally commit and push only the plan file, and return the review link |
 | `lake_review_status` | Status, verdicts, open threads with line numbers, reviewer suggestions, budget approval, and the model/cost view with Lake's suggestions. Works before a PR exists. `wait_seconds` (up to 240) waits for new feedback |
-| `lake_submit_revision` | Save a revised plan and resolve the threads it addresses. Or apply a suggestion in one step: `thread_id`, `suggestion_id` or `model` |
+| `lake_submit_revision` | Save a revised plan and resolve the threads it addresses (in Lake; GitHub's own review threads stay open until someone resolves them there). Or apply a suggestion in one step: `thread_id`, `suggestion_id` or `model` |
 | `lake_review` | For reviewers: `approve`, `request_changes`, `comment` (on lines), `reply`, or `suggest` a cheaper model or a cap. Approvals need the exact version and say "via Claude Code (MCP)" |
 
 The PR author can't approve their own plan from any surface. An approval from an agent chat is posted under the human's GitHub account, so only use it when that person asked for it.
@@ -119,14 +121,14 @@ lake-gate hook claude                    the Claude Code PreToolUse hook (stdin 
 | `requirePlan` | `"warn"` | PR changes code without a plan: `off`, `warn`, `fail` |
 | `localGate` | `"block"` | Hook behaviour: `block` (deny), `ask` (Claude Code prompts you), `off` |
 | `readOnlyBash` | git status/log/diff, ls, cat, rg... | Bash commands allowed before approval (regexes; chained commands are not) |
-| `autoApprove` | `{mode:"on", maxUsd:1.5, maxSteps:3, maxComplexity:"low"}` | Tiny plans pass without a human. `off`, `shadow` (only report), or `on` |
+| `autoApprove` | `{mode:"on", maxUsd:1.5, maxSteps:3, maxComplexity:"low", maxCodeLines:150}` | Tiny plans with a small diff pass without a human. `off`, `shadow` (only report), or `on` |
 | `budget` | `{approverAbove:null, approvers:[]}` | Above this many dollars (upper estimate of the planned model), one of `approvers` must also approve. Use GitHub **logins**, e.g. `["alice","bob"]`. `@org/team` needs a token with `read:org`, which the default Action token doesn't have. When a team can't be read, the summary says so and repo admins can approve instead |
 | `gateWithoutPlan` | `false` | `true` blocks edits even when there's no plan |
 | `provider`, `catalog` | `anthropic`, lake-meter prices | Same shape as lake-meter's price catalog |
 | `nativeReviews` | `true` | GitHub's own Approve / Request changes count for the plan version at the reviewed commit |
 | `reviewUrl` | hosted review app | Where the summary comment's buttons point. `""` hides them |
 
-The PR check reads the config from the **base branch**, so a PR can't loosen its own policy.
+The PR check reads the config from the **current head of the base branch**, so a PR can't loosen its own policy, and tightening the policy on `main` re-checks open PRs right away (the workflow also runs on pushes that change `.lake/config.json`). The file may use `//` comments and trailing commas. If it still can't be read, lake-gate names the file, line and column, and keeps gating with its defaults instead of blocking every command.
 
 ## What it does not do (read this)
 

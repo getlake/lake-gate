@@ -16,7 +16,7 @@ export const DEFAULT_CONFIG = {
   nativeReviews: true, // GitHub "Review changes → Approve / Request changes" counts for the plan version at the reviewed commit
   reviewUrl: 'https://getlake.github.io/lake-gate/app/', // Lake review UI linked from the PR summary ("" to hide the buttons)
   checkButtons: false, // experimental: Approve / Request changes buttons on a GitHub check run (needs checks: write)
-  autoApprove: { mode: 'on', maxUsd: 1.5, maxSteps: 3, maxComplexity: 'low' }, // tiny plans pass without a human. mode: "off" | "shadow" | "on"
+  autoApprove: { mode: 'on', maxUsd: 1.5, maxSteps: 3, maxComplexity: 'low', maxCodeLines: 150 }, // tiny plans with a small diff pass without a human. mode: "off" | "shadow" | "on"
   // Budget approval: above approverAbove (USD, upper estimate or the plan's "Budget cap") one of approvers
   // must approve the exact version too. List GitHub logins, e.g. ["alice", "bob"]. "@org/team" needs a token with
   // read:org, which the default Action token doesn't have (lake-gate then warns and lets repo admins approve).
@@ -33,7 +33,45 @@ export function merge(base, over) {
   return out;
 }
 
-export function parseConfig(text) {
-  if (!text) return DEFAULT_CONFIG;
-  return merge(DEFAULT_CONFIG, JSON.parse(text));
+// Config files are hand-edited, so accept // and /* */ comments and trailing commas (JSONC).
+export function stripJsonc(text) {
+  let out = ''; let i = 0; let inStr = false;
+  const s = String(text).replace(/^\uFEFF/, '');
+  while (i < s.length) {
+    const c = s[i];
+    if (inStr) { out += c; if (c === '\\') { out += s[i + 1] ?? ''; i += 2; continue; } if (c === '"') inStr = false; i++; continue; }
+    if (c === '"') { inStr = true; out += c; i++; continue; }
+    if (c === '/' && s[i + 1] === '/') { while (i < s.length && s[i] !== '\n') { out += ' '; i++; } continue; }
+    if (c === '/' && s[i + 1] === '*') { out += '  '; i += 2; while (i < s.length && !(s[i] === '*' && s[i + 1] === '/')) { out += s[i] === '\n' ? '\n' : ' '; i++; } out += '  '; i += 2; continue; }
+    out += c; i++;
+  }
+  // trailing commas before } or ] (outside strings: strings were copied verbatim, so check by re-scanning)
+  let res = ''; inStr = false;
+  for (let j = 0; j < out.length; j++) {
+    const c = out[j];
+    if (inStr) { res += c; if (c === '\\') { res += out[j + 1] ?? ''; j++; } else if (c === '"') inStr = false; continue; }
+    if (c === '"') { inStr = true; res += c; continue; }
+    if (c === ',') { let k = j + 1; while (k < out.length && /\s/.test(out[k])) k++; if (out[k] === '}' || out[k] === ']') { res += ' '; continue; } }
+    res += c;
+  }
+  return res;
+}
+
+export class ConfigError extends Error {}
+// Throws ConfigError with the file, line and column when the JSON can't be read even leniently.
+export function parseConfig(text, file = '.lake/config.json') {
+  if (!text || !String(text).trim()) return DEFAULT_CONFIG;
+  const clean = stripJsonc(text);
+  let data;
+  try { data = JSON.parse(clean); } catch (e) {
+    const m = String(e.message).match(/position (\d+)/); const pos = m ? Number(m[1]) : null;
+    const where = pos == null ? '' : (() => { const before = clean.slice(0, pos).split('\n'); return ` (line ${before.length}, column ${before.at(-1).length + 1})`; })();
+    throw new ConfigError(`${file} is not valid JSON${where}: ${String(e.message).replace(/ in JSON at position \d+.*$/, '').replace(/\s*\(line \d+ column \d+\)$/, '')}`);
+  }
+  if (!isObj(data)) throw new ConfigError(`${file} must contain a JSON object ({ ... }).`);
+  return merge(DEFAULT_CONFIG, data);
+}
+// Never throws: on a broken file, the defaults apply (the gate stays on) and `configError` says what to fix.
+export function safeParseConfig(text, file) {
+  try { return parseConfig(text, file); } catch (e) { if (!(e instanceof ConfigError)) throw e; return { ...DEFAULT_CONFIG, configError: e.message }; }
 }

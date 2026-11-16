@@ -1,10 +1,10 @@
 // Reads review state for plans from GitHub PRs and writes review actions back as PR comments.
 // Browser-safe: used by the Lake review UI (directly or through `lake-gate ui`'s local proxy) and by the MCP server.
-import { parseConfig } from './config-core.js';
-import { resolveBudgetApprovers } from './github.js';
+import { safeParseConfig } from './config-core.js';
+import { resolveBudgetApprovers, codeLinesOf, MARKER } from './github.js';
 import { applyPatch } from './models.js';
 import { splitFrontmatter, renderPlanFile, readPlanText } from './plan.js';
-import { estimatePlan, renderEstimate } from './estimate.js';
+import { estimatePlan, renderEstimate, autoApproveVerdict } from './estimate.js';
 import { buildPlanReview, versionsFromSnapshots, normalizeIssueComment, normalizeReview, normalizeLineComment,
   commentBody, replyBody, resolveBody, verdictBody, suggestionBody, acceptBody } from './review.js';
 
@@ -14,11 +14,11 @@ const MAX_COMMITS = 60;
 export async function loadPr(gh, number, { pr: prIn } = {}) {
   const pr = prIn && prIn.base ? prIn : await gh.req('GET', `/pulls/${number}`);
   const [cfgText, files, commitsAll, comments, reviews, lines] = await Promise.all([
-    gh.file('.lake/config.json', pr.base.sha), gh.all(`/pulls/${number}/files`), gh.all(`/pulls/${number}/commits`),
+    gh.file('.lake/config.json', pr.base.ref).catch(() => null).then((t) => t ?? gh.file('.lake/config.json', pr.base.sha)), gh.all(`/pulls/${number}/files`), gh.all(`/pulls/${number}/commits`),
     gh.all(`/issues/${number}/comments`), gh.all(`/pulls/${number}/reviews`), gh.all(`/pulls/${number}/comments`)]);
-  const config = parseConfig(cfgText);
+  const config = safeParseConfig(cfgText, `.lake/config.json on ${pr.base.ref}`);
   const commits = commitsAll.slice(-MAX_COMMITS);
-  const events = [...comments.map(normalizeIssueComment), ...reviews.filter((r) => r.state !== 'DISMISSED' && r.state !== 'PENDING').map(normalizeReview), ...lines.map(normalizeLineComment)];
+  const events = [...comments.filter((c) => !String(c.body || '').startsWith(MARKER)).map(normalizeIssueComment), ...reviews.filter((r) => r.state !== 'DISMISSED' && r.state !== 'PENDING').map(normalizeReview), ...lines.map(normalizeLineComment)];
   const requestedReviewers = (pr.requested_reviewers || []).map((u) => u.login);
   const budgetApprovers = await resolveBudgetApprovers(gh, config);
   const plans = [];
@@ -40,7 +40,8 @@ export async function loadPr(gh, number, { pr: prIn } = {}) {
     const versions = versionsFromSnapshots(snaps, fallbackId);
     const plan = versions.find((v) => v.digest === versionsFromSnapshots([{ text: headText }], fallbackId)[0].digest);
     digestAt[pr.head.sha] = plan.digest;
-    plans.push(buildPlanReview({ plan, versions, events, prAuthor: pr.user.login, config, digestAt, pr, requestedReviewers, budgetApprovers }));
+    const gatedBefore = versions.some((v) => v.digest !== plan.digest && !autoApproveVerdict(estimatePlan(v.body, config), config).eligible);
+    plans.push(buildPlanReview({ plan, versions, events, prAuthor: pr.user.login, config, digestAt, pr, requestedReviewers, budgetApprovers, autoContext: { codeLines: codeLinesOf(files), gatedBefore } }));
   }
   return { pr, config, plans, events };
 }
@@ -81,7 +82,7 @@ export const actions = {
     const path = `.lake/plans/${o.planId}.md`;
     const cur = await gh.req('GET', `/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(pr.head.ref)}`);
     if (!cur) throw new Error(`${path} not found on ${pr.head.ref}`);
-    const config = parseConfig(await gh.file('.lake/config.json', pr.base.sha));
+    const config = safeParseConfig(await gh.file('.lake/config.json', pr.base.ref));
     const text = patchPlanFile(fromB64(cur.content), o.patch, config);
     await gh.req('PUT', `/contents/${path.split('/').map(encodeURIComponent).join('/')}`, { message: `Plan ${o.planId}: ${o.title || 'apply suggestion'}`, content: toB64(text), sha: cur.sha, branch: pr.head.ref });
     const nv = readPlanText(text).digest;

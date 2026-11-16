@@ -55,6 +55,7 @@ export function exportPlan(root, markdown, { id, source, sessionId, author, fres
   const config = loadConfig(root);
   const state = getState(root);
   const incoming = splitFrontmatter(markdown).body;
+  if (!String(incoming).trim()) throw new Error('No plan text found; nothing saved.');
   let planId = id || (sessionId && state.sessions[sessionId]) || null;
   // Re-saving a plan with the same title (the CLI / MCP edit loop) is a new version of it, not a "-2" copy.
   if (!planId && !fresh && !sessionId && fs.existsSync(planPath(root, slugify(titleOf(incoming))))) planId = slugify(titleOf(incoming));
@@ -69,26 +70,46 @@ export function exportPlan(root, markdown, { id, source, sessionId, author, fres
   }
   author = author || git(root, ['config', 'user.email']) || undefined;
   const est = estimatePlan(incoming, config);
+  if (!est.steps.length) throw new Error('No steps found in the plan; nothing saved. Write the steps as a numbered list (1. 2. 3.).');
   fs.mkdirSync(plansDir(root), { recursive: true });
   fs.writeFileSync(planPath(root, planId), renderPlanFile({ id: planId, title: titleOf(incoming), author, source, created, body: incoming, estimateMd: renderEstimate(est, config) }));
   state.active = planId;
   if (sessionId) state.sessions[sessionId] = planId;
+  // Once any version of a plan needs a human, later (smaller) versions don't auto-approve.
+  if (!autoApproveVerdict(est, config).eligible) markGated(state, planId);
   setState(root, state);
   const plan = loadPlan(root, planId);
   return { plan, estimate: est, config, previous: before && before.digest !== plan.digest ? before : null, unchanged: !!before && before.digest === plan.digest };
 }
 
+export function markGated(state, planId) { state.gated = { ...(state.gated || {}), [planId]: true }; return state; }
+
 // Local approval status of a plan, based on the last `lake-gate sync` from GitHub and the local auto-approve policy.
-export function localStatus(root, plan, config = loadConfig(root)) {
+// Only a human approval synced from the PR (or a trial self-approval) for this exact version counts; auto-approve
+// is re-checked locally every time (ctx.codeLines: the local diff, see hook.js).
+export function localStatus(root, plan, config = loadConfig(root), ctx = {}) {
   const est = estimatePlan(plan.body, config);
   const rec = getApprovals(root)[plan.id];
-  if (rec && rec.digest === plan.digest && (rec.state === 'approved' || rec.state === 'auto-approved')) return { state: rec.state, approvers: rec.approvers || [], estimate: est, synced: rec, trial: !!rec.trial };
+  if (rec && rec.digest === plan.digest && rec.state === 'approved') return { state: rec.state, approvers: rec.approvers || [], estimate: est, synced: rec, trial: !!rec.trial };
   if (rec && rec.digest === plan.digest && rec.state === 'changes-requested') return { state: 'changes-requested', approvers: [], blockers: rec.blockers, estimate: est, synced: rec };
   const a = config.autoApprove || {};
   if (a.mode === 'on') {
-    const v = autoApproveVerdict(est, config);
+    const v = autoApproveVerdict(est, config, { gatedBefore: !!getState(root).gated?.[plan.id], codeLines: ctx.codeLines });
     if (v.eligible) return { state: 'auto-approved', approvers: [], estimate: est };
+    return { state: 'pending', stale: !!(rec && rec.digest !== plan.digest && rec.state === 'approved'), approvers: [], estimate: est, autoReasons: v.reasons };
   }
-  const stale = rec && rec.digest !== plan.digest && (rec.state === 'approved' || rec.state === 'auto-approved');
+  const stale = rec && rec.digest !== plan.digest && rec.state === 'approved';
   return { state: 'pending', stale, approvers: [], estimate: est };
+}
+
+// Changed lines of code outside .lake/ in this checkout, compared with where the branch left the default branch
+// (or HEAD when there is no remote): committed + uncommitted + untracked. Used to keep auto-approve small.
+export function localCodeLines(root) {
+  const base = ['origin/HEAD', 'origin/main', 'origin/master'].map((r) => git(root, ['merge-base', 'HEAD', r])).find(Boolean) || (git(root, ['rev-parse', '--verify', 'HEAD']) ? 'HEAD' : null);
+  let n = 0;
+  const num = base ? git(root, ['diff', '--numstat', base, '--', '.', ':(exclude).lake']) : '';
+  for (const l of String(num || '').split('\n')) { const [a, d] = l.split('\t'); n += (Number(a) || 0) + (Number(d) || 0); }
+  const untracked = String(git(root, ['ls-files', '--others', '--exclude-standard', '--', '.', ':(exclude).lake']) || '').split('\n').filter(Boolean).slice(0, 500);
+  for (const f of untracked) { try { const st = fs.statSync(path.join(root, f)); if (st.isFile() && st.size < 2e6) n += fs.readFileSync(path.join(root, f), 'utf8').split('\n').length; } catch { /* gone */ } }
+  return n;
 }

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { loadConfig } from './config.js';
-import { repoRoot, stateDir, getState, setState, loadPlan, exportPlan, localStatus } from './store.js';
+import { repoRoot, stateDir, getState, setState, loadPlan, exportPlan, localStatus, markGated, localCodeLines } from './store.js';
 import { range, costLabel } from './estimate.js';
 
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -21,13 +21,28 @@ function approveHint(plan, config) {
 export function handleClaudePreToolUse(input, env = process.env) {
   if (env.LAKE_GATE === 'off') return null;
   const root = repoRoot(input.cwd || env.CLAUDE_PROJECT_DIR || process.cwd());
-  const config = loadConfig(root);
+  const config = loadConfig(root); // never throws: a broken file means defaults + a warning
   const tool = input.tool_name;
   const ti = input.tool_input || {};
+  const warn = config.configError ? `lake-gate: ${config.configError}. Using safe defaults until it's fixed.` : null;
+  const once = (key, res) => {
+    if (!warn) return res;
+    const state = getState(root); const k = `cfg:${input.session_id || 'default'}:${config.configError}`;
+    if ((state.noticed || []).includes(k)) return res;
+    state.noticed = [...(state.noticed || []).slice(-50), k]; setState(root, state);
+    if (!res) return { systemMessage: warn };
+    return { ...res, systemMessage: [res.systemMessage, warn].filter(Boolean).join('\n') };
+  };
+  const r = decide();
+  return r && r.hookSpecificOutput?.permissionDecision === 'deny' && warn ? { ...r, systemMessage: [r.systemMessage, warn].filter(Boolean).join('\n') } : once('cfg', r);
+
+  function decide() { // eslint-disable-line no-inner-declarations
 
   if (tool === 'ExitPlanMode') {
     if (!ti.plan || !String(ti.plan).trim()) return null;
-    const { plan, estimate } = exportPlan(root, ti.plan, { source: 'claude-code', sessionId: input.session_id });
+    let saved;
+    try { saved = exportPlan(root, ti.plan, { source: 'claude-code', sessionId: input.session_id }); } catch (e) { return out(null, null, { systemMessage: `Lake: plan not saved: ${e.message}` }); }
+    const { plan, estimate } = saved;
     const st = localStatus(root, plan, config);
     const gateNote = st.state === 'approved' || st.state === 'auto-approved' ? `Already ${st.state}` : 'Implementation is gated until a teammate approves this version';
     return out(null, null, { systemMessage: `Lake: plan saved to .lake/plans/${plan.id}.md (version ${plan.short}, ${estimate.complexity} complexity, est. ${costLabel(estimate)}). ${gateNote}.` });
@@ -40,7 +55,9 @@ export function handleClaudePreToolUse(input, env = process.env) {
   if (FILE_TOOLS.has(tool)) {
     const fp = path.resolve(root, ti.file_path || ti.notebook_path || '');
     if (inside(fp, sdir)) return out('deny', 'Lake: local approval state cannot be edited by the agent.');
-    if (inside(fp, path.join(root, '.lake', 'plans'))) return null; // editing a plan is allowed; it creates a new version
+    // Plans and policy change through tracked paths only (plan mode, `npx lake-gate plan`, lake_submit_revision),
+    // so an agent can't rewrite a blocked plan or loosen the policy to open the gate.
+    if (inside(fp, path.join(root, '.lake'))) return out('deny', 'Lake: files in .lake/ are not edited directly. To change the plan, use plan mode again, `npx lake-gate plan <file.md>`, or the lake_submit_revision tool; every change is a new version that needs approval. Policy (.lake/config.json) is changed by a human.');
     if (!inside(fp, root)) return null; // outside the repo is out of scope
   }
   if (tool === 'Bash') {
@@ -48,8 +65,8 @@ export function handleClaudePreToolUse(input, env = process.env) {
     if (/\.git\/lake|lake[\\/]+(state|approvals)\.json/.test(cmd)) return out('deny', 'Lake: local approval state cannot be edited by the agent.');
     if (/lake-gate(@\S+)?\s+use\b/.test(cmd)) return out('deny', 'Lake: switching the active plan is a human action. Ask the user to run `npx lake-gate use <id>`.');
     if (/lake-gate(@\S+)?\s+approve\b/.test(cmd)) return out('deny', 'Lake: approving is a human action. Ask the user to run `npx lake-gate approve` themselves.');
-    const ro = config.readOnlyBash.some((r) => new RegExp(r).test(cmd)) && !/[;&|`$()<>]/.test(cmd.replace(/2>&1|\|\s*(head|tail|wc|rg|grep|sort|uniq)\b[^|;&]*/g, ''));
-    if (ro) return null;
+    if (/\.lake[\\/]+(plans|config\.json)/.test(cmd) && !isReadOnly(cmd, config)) return out('deny', 'Lake: plan files and .lake/config.json are not changed from the shell. Use plan mode, `npx lake-gate plan <file.md>` or lake_submit_revision for a new plan version.');
+    if (isReadOnly(cmd, config)) return null;
   }
 
   const decision = config.localGate === 'ask' ? 'ask' : 'deny';
@@ -65,9 +82,27 @@ export function handleClaudePreToolUse(input, env = process.env) {
     state.noticed = [...(state.noticed || []).slice(-50), sid]; setState(root, state);
     return out(null, null, { systemMessage: 'lake-gate: no plan for this task, so it is not gated. Use plan mode to gate bigger work.' });
   }
-  const st = localStatus(root, plan, config);
+  const added = String(ti.content || ti.new_string || (ti.edits || []).map((e) => e.new_string).join('\n') || '').split('\n').length;
+  const st = localStatus(root, plan, config, { codeLines: localCodeLines(root) + (FILE_TOOLS.has(tool) ? added : 0) });
   if (st.state === 'approved' || st.state === 'auto-approved') return null;
+  if (!st.stale && st.state === 'pending') { const s2 = getState(root); if (!s2.gated?.[plan.id]) setState(root, markGated(s2, plan.id)); }
+  if (st.autoReasons?.some((x) => /changed lines/.test(x)) && !(st.autoReasons || []).some((x) => !/changed lines/.test(x))) {
+    return out(decision, `Lake: plan "${plan.id}" was small enough to auto-approve, but the work has grown past it (${st.autoReasons.join('; ')}). Stop and tell the user: a teammate should review the plan now.\n${approveHint(plan, config)}`);
+  }
   const why = st.state === 'changes-requested' ? `changes were requested by ${(st.blockers || []).map((b) => '@' + b).join(', ')}` :
     st.stale ? 'the plan was edited after it was approved, so the approval no longer applies' : 'it is not approved yet';
   return out(decision, `Lake: plan "${plan.id}" version ${plan.short} blocks implementation because ${why}. Do not work around this gate; stop and tell the user.\n${approveHint(plan, config)}`);
+}
+}
+
+// Read-only shell commands pass the gate. One simple command only: no chaining, redirection, substitution or
+// newlines, and nothing that can delete through a read-only command's flags (find -delete, env <cmd>, git branch -D).
+export function isReadOnly(cmd, config) {
+  const c = String(cmd);
+  if (/[\n\r]/.test(c.trim())) return false;
+  if (/^\s*find\b.*\s-(delete|exec|execdir|ok|okdir|fprint|fprintf|fls)\b/.test(c)) return false;
+  if (/^\s*env\s+\S/.test(c) && !/^\s*env\s*(\||$)/.test(c)) return false;
+  if (/^\s*git\s+branch\b.*\s(-[a-zA-Z]*[dDmMcC]|--delete|--move|--copy|--force|-f)\b/.test(c)) return false;
+  if (/^\s*git\s+remote\s+(add|remove|rm|rename|set-url|set-head|prune)\b/.test(c)) return false;
+  return config.readOnlyBash.some((r) => new RegExp(r).test(c)) && !/[;&|`$()<>]/.test(c.replace(/2>&1|\|\s*(head|tail|wc|rg|grep|sort|uniq)\b[^|;&]*/g, ''));
 }
