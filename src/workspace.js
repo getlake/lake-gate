@@ -48,14 +48,13 @@ export async function loadPr(gh, number, { pr: prIn } = {}) {
 // All plans in recent PRs of a repo (open first). One page of PRs keeps API use predictable.
 export async function loadWorkspace(gh, { state = 'all', limit = 20 } = {}) {
   const prs = ((await gh.req('GET', `/pulls?state=${state}&sort=updated&direction=desc&per_page=${limit}`)) || []);
-  const out = [];
-  for (const pr of prs) {
+  // In parallel: one slow PR (or a slow unauthenticated API) shouldn't make the whole page wait in line.
+  const per = await Promise.all(prs.map(async (pr) => {
     const files = await gh.all(`/pulls/${pr.number}/files`);
-    if (!files.some((f) => isPlanFile(f.filename) && f.status !== 'removed')) continue;
-    const r = await loadPr(gh, pr.number);
-    out.push(...r.plans);
-  }
-  return { repo: gh.repo, plans: out };
+    if (!files.some((f) => isPlanFile(f.filename) && f.status !== 'removed')) return [];
+    return (await loadPr(gh, pr.number)).plans;
+  }));
+  return { repo: gh.repo, plans: per.flat() };
 }
 
 // ---- Writes: everything is a PR comment (or a reply on a native line comment) ----
