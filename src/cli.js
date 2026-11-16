@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import { repoRoot, exportPlan, loadPlan, listPlans, getState, setState, localStatus, getApprovals, setApprovals } from './store.js';
 import { loadConfig } from './config.js';
-import { estimatePlan, renderEstimate, range } from './estimate.js';
+import { estimatePlan, renderEstimate, range, costLabel } from './estimate.js';
 import { handleClaudePreToolUse } from './hook.js';
 import { syncFromGitHub, applyEvents } from './sync.js';
-import { init, ACTION_REF } from './init.js';
+import { init, uninstall, ACTION_REF } from './init.js';
 import { startUi } from './ui-server.js';
 import { serve as serveMcp } from './mcp.js';
 
@@ -14,6 +14,7 @@ Usage:
   lake-gate init [--try] [--force]                        Set up .lake/, the Claude Code hook, MCP and the GitHub workflow
                                                            --try: solo trial, approve your own plans locally
   lake-gate approve [id]                                   Trial mode only: approve the active plan locally (never counts on the PR)
+  lake-gate uninstall                                      Remove the hook, MCP entries and workflow (keeps .lake/ plans)
   lake-gate plan <file.md|->  [--id name]                 Save a plan (any agent) to .lake/plans/ with an estimate; make it active
   lake-gate estimate <file.md|->                          Print complexity, model per step and cost range
   lake-gate status                                         Active plan, version and approval state
@@ -31,9 +32,9 @@ const readInput = (f) => (f === '-' || !f ? fs.readFileSync(0, 'utf8') : fs.read
 
 function describe(root, plan) {
   const st = localStatus(root, plan);
-  const extra = st.state === 'pending' ? (st.stale ? ' (approval is for an older version)' : '') + `\n  approve on the PR: /lake approve ${plan.id}@${plan.short}` : st.approvers?.length ? ` by ${st.approvers.map((a) => '@' + a).join(', ')}` : '';
+  const extra = st.state === 'pending' ? (st.stale ? ' (approval is for an older version)' : '') + (loadConfig(root).try ? '\n  approve locally: npx lake-gate approve' : `\n  approve on the PR: /lake approve ${plan.id}@${plan.short}`) : st.approvers?.length ? ` by ${st.approvers.map((a) => '@' + a).join(', ')}` : '';
   const e = st.estimate;
-  return `${plan.id}  v${plan.short}  ${e.complexity}  est. ${range(e.declared ? e.plannedUsd : e.usd)}${e.model ? ` on ${e.model.name}` : ''}  ${st.state}${st.trial ? ' (trial, local only)' : ''}${extra}`;
+  return `${plan.id}  v${plan.short}  ${e.complexity}  est. ${costLabel(e)}  ${st.state}${st.trial ? ' (trial, local only)' : ''}${extra}`;
 }
 
 export async function main(argv = process.argv.slice(2), io = { out: (s) => process.stdout.write(s + '\n'), err: (s) => process.stderr.write(s + '\n') }) {
@@ -47,10 +48,19 @@ export async function main(argv = process.argv.slice(2), io = { out: (s) => proc
       io.out(`${trial ? '' : '\nNext:\n'}  git add .lake .claude .github .mcp.json .cursor && git commit -m "Add lake-gate" && git push\n  Then review plans with: npx lake-gate ui   (or in GitHub with Review changes → Approve)\n  Optional: require the "lake/plan-approval" status check in branch protection.`);
       return 0;
     }
+    case 'uninstall': {
+      for (const l of uninstall(root)) io.out(l);
+      io.out('Kept .lake/ (your plans and config). Delete it yourself if you want it gone, then commit. Remove "lake/plan-approval" from required checks if you set it.');
+      return 0;
+    }
     case 'plan': {
-      const { plan, estimate } = exportPlan(root, readInput(args.find((a) => !a.startsWith('--') && a !== flag(args, '--id'))), { id: flag(args, '--id'), source: 'cli' });
-      io.out(`Saved .lake/plans/${plan.id}.md  version ${plan.short}  ${estimate.complexity}  est. ${range(estimate.declared ? estimate.plannedUsd : estimate.usd)}${estimate.model ? ` on ${estimate.model.name}` : ""}`);
-      io.out(`Approve on the PR with: /lake approve ${plan.id}@${plan.short}`);
+      const { plan, estimate, config, previous, unchanged } = exportPlan(root, readInput(args.find((a) => !a.startsWith('--') && a !== flag(args, '--id'))), { id: flag(args, '--id'), source: 'cli', fresh: args.includes('--new') });
+      io.out(previous ? `Updated ${plan.id} → v${plan.short} (was v${previous.short}; approval reset)  ${estimate.complexity}  est. ${costLabel(estimate)}`
+        : `${unchanged ? 'Unchanged' : 'Saved'} .lake/plans/${plan.id}.md  version ${plan.short}  ${estimate.complexity}  est. ${costLabel(estimate)}`);
+      const st = localStatus(root, plan, config);
+      if (st.state === 'approved' || st.state === 'auto-approved') io.out(st.state === 'auto-approved' ? 'Auto-approved (small plan). The agent can build.' : 'Approved. The agent can build.');
+      else if (config.try) io.out('Approve locally: npx lake-gate approve');
+      else io.out(`Approve on the PR with: /lake approve ${plan.id}@${plan.short}`);
       return 0;
     }
     case 'estimate': {

@@ -6,14 +6,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { repoRoot, loadPlan, getState, exportPlan, listPlans } from './store.js';
+import { repoRoot, loadPlan, getState, exportPlan, listPlans, localStatus } from './store.js';
 import { client } from './github.js';
 import { parseRemote, applyEvents } from './sync.js';
 import { collectEvents, nativeDigests } from './github.js';
 import { loadPr, actions } from './workspace.js';
 import { loadConfig } from './config.js';
-import { range, money, estimatePlan } from './estimate.js';
-import { costSuggestions, modelOptions, applyPatch, resolveModel, describePatch } from './models.js';
+import { range, money, estimatePlan, costLabel, mixedModels } from './estimate.js';
+import { costSuggestions, modelOptions, applyPatch, resolveModel, describePatch, budgetRule } from './models.js';
 import { stripEstimate } from './plan.js';
 import { acceptBody } from './review.js';
 
@@ -54,9 +54,9 @@ const ALIASES = {
 
 export function formatCost(est, config, sugg = costSuggestions(est, config), budget) {
   const L = [];
-  L.push(`Cost: ${est.declared ? `${range(est.plannedUsd)} with the planned model${est.model ? ` (${est.model.name})` : 's'}` : `${range(est.usd)} with Lake's pick per step (no model declared; add a "Model: <name>" line)`}${est.cap != null ? `, capped at ${money(est.cap)}` : ''}.`);
+  L.push(`Cost: ${est.declared ? `${range(est.plannedUsd)} ${mixedModels(est) ? `with the models planned per step${est.model ? ` (default ${est.model.name})` : ''}` : `with the planned model${est.model ? ` (${est.model.name})` : 's'}`}` : `${range(est.usd)} with Lake's pick per step (no model declared; add a "Model: <name>" line)`}${est.cap != null ? `, capped at ${money(est.cap)}` : ''}.`);
   L.push('Steps:', ...est.steps.map((s) => `  ${s.n}. ${s.title.slice(0, 70)} · ${s.complexity} · ${s.planned ? s.planned.name + (s.fit === 'risky' ? ' (may be too weak)' : s.fit === 'overkill' ? ' (more than needed)' : '') : 'not set'} · Lake pick ${s.model} · ${range(s.planned ? s.planned.usd : s.usd)}`));
-  L.push('Model options (whole plan):', ...modelOptions(est, config).slice(0, 7).map((o) => `  ${o.key}: ${range(o.usd)} · ${o.fit} · ${o.note}`));
+  L.push('Model options (whole plan):', ...modelOptions(est, config).slice(0, 7).map((o) => `  ${o.name}: ${range(o.usd)} · ${o.fit} · ${o.note}`));
   if (sugg.length) L.push('Suggestions:', ...sugg.map((x) => `  [${x.id}] ${x.title}, saves up to ${money(x.saving[1])}`));
   if (budget?.required) L.push(`Budget approval: up to ${money(budget.exposure)} > ${money(budget.threshold)}. ${budget.satisfied ? `Approved by @${budget.approvedBy.join(', @')}.` : `Needs one of ${budget.approvers.map((x) => '@' + x).join(', ')} to approve this version.`}`);
   for (const n of est.modelNotes || []) L.push(`Note: ${n}`);
@@ -119,7 +119,7 @@ async function prModel(ctx, id) {
 export function formatReview(m, { localDigest, link } = {}) {
   const L = [];
   L.push(`Plan ${m.id} · v${m.short} (round ${m.round}) · status: ${m.status}${m.policy.needed && m.status === 'in-review' ? ` · needs ${m.policy.needed} more approval(s)` : ''}`);
-  L.push(`Estimate: ${m.estimate.complexity} complexity, ${range(m.estimate.declared ? m.estimate.plannedUsd : m.estimate.usd)}${m.estimate.model ? ` on ${m.estimate.model.name}` : ''}`);
+  L.push(`Estimate: ${m.estimate.complexity} complexity, ${costLabel(m.estimate)}`);
   if (m.budget?.required) L.push(`Budget approval: ${m.budget.satisfied ? `done by @${m.budget.approvedBy.join(', @')}` : `needed from one of ${m.budget.approvers.map((x) => '@' + x).join(', ')} (up to ${money(m.budget.exposure)} > ${money(m.budget.threshold)})`}`);
   if (m.suggestions?.length) L.push(`Lake suggestions: ${m.suggestions.map((x) => `[${x.id}] ${x.title} (saves up to ${money(x.saving[1])})`).join('; ')}`);
   const sg = m.threads.filter((t) => t.suggestion && !t.resolved);
@@ -179,8 +179,18 @@ export async function callTool(ctx, name, a = {}) {
     case 'lake_review_status': {
       const id = resolveId(ctx, a.plan_id);
       const local = loadPlan(ctx.root, id);
-      let { number, model, config, events, pr } = await prModel(ctx, id);
-      const localCost = () => { if (!local) return ''; const cfg = loadConfig(ctx.root); return `\n\n${formatCost(estimatePlan(local.body, cfg), cfg)}`; };
+      const localCost = () => {
+        if (!local) return '';
+        const cfg = loadConfig(ctx.root); const est = estimatePlan(local.body, cfg); const rule = budgetRule(est, cfg);
+        const st = localStatus(ctx.root, local, cfg);
+        return `\nLocal status: ${st.state}${st.trial ? ' (trial)' : ''}.\n\n${formatCost(est, cfg, undefined, rule.required ? { ...rule, satisfied: false } : null)}`;
+      };
+      let pm;
+      try { pm = await prModel(ctx, id); } catch (e) {
+        if (/No GitHub remote/.test(e.message)) return `Plan ${id}${local ? ` v${local.short}` : ''} (local only).${localCost()}\n\nAdd a GitHub remote (origin) and open a PR to share it for review.`;
+        throw e;
+      }
+      let { number, model, config, events, pr } = pm;
       if (!number) return `No open PR for this branch yet. Push the plan and open a PR so teammates can review it.${local ? ` Local plan ${id} is v${local.short}.` : ''}${localCost()}`;
       if (!model) return `PR #${number} does not contain .lake/plans/${id}.md yet. Push the plan file.`;
       const wait = Math.min(240, Math.max(0, Number(a.wait_seconds) || 0));

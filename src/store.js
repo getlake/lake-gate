@@ -51,11 +51,14 @@ function uniqueId(root, base) {
 }
 
 // Writes (or re-versions) a plan file with a fresh estimate. Returns the loaded plan + estimate.
-export function exportPlan(root, markdown, { id, source, sessionId, author } = {}) {
+export function exportPlan(root, markdown, { id, source, sessionId, author, fresh = false } = {}) {
   const config = loadConfig(root);
   const state = getState(root);
   const incoming = splitFrontmatter(markdown).body;
   let planId = id || (sessionId && state.sessions[sessionId]) || null;
+  // Re-saving a plan with the same title (the CLI / MCP edit loop) is a new version of it, not a "-2" copy.
+  if (!planId && !fresh && !sessionId && fs.existsSync(planPath(root, slugify(titleOf(incoming))))) planId = slugify(titleOf(incoming));
+  const before = planId && fs.existsSync(planPath(root, planId)) ? loadPlan(root, planId) : null;
   let created = new Date().toISOString();
   if (planId && fs.existsSync(planPath(root, planId))) {
     const prev = splitFrontmatter(fs.readFileSync(planPath(root, planId), 'utf8')).meta;
@@ -71,7 +74,8 @@ export function exportPlan(root, markdown, { id, source, sessionId, author } = {
   state.active = planId;
   if (sessionId) state.sessions[sessionId] = planId;
   setState(root, state);
-  return { plan: loadPlan(root, planId), estimate: est, config };
+  const plan = loadPlan(root, planId);
+  return { plan, estimate: est, config, previous: before && before.digest !== plan.digest ? before : null, unchanged: !!before && before.digest === plan.digest };
 }
 
 // Local approval status of a plan, based on the last `lake-gate sync` from GitHub and the local auto-approve policy.

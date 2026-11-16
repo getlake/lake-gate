@@ -16,7 +16,8 @@ export const NEED = { low: 2, medium: 3, high: 4 };
 const need = (s) => NEED_LEVEL[s.level] ?? NEED[s.complexity];
 const TIER_ALIAS = { fast: 'light', light: 'light', balanced: 'standard', standard: 'standard', frontier: 'heavy', heavy: 'heavy', max: 'frontier' };
 // Current models shown as options (older ones still resolve and price).
-const CURRENT = (prices) => [...new Set(Object.values(prices.recommend || {}).flatMap((r) => Object.values(r)))];
+// Models offered in the picker: the configured provider's tiers plus anything the team added to "catalog".
+const CURRENT = (prices, config = {}) => [...new Set([...Object.values(prices.recommend?.[config.provider || 'anthropic'] || {}), ...Object.keys(config.catalog || {})])];
 
 export function catalogOf(config) {
   const prices = pricesFor(config);
@@ -91,7 +92,7 @@ export function applyDeclarations(est, body, config) {
 export function modelOptions(est, config) {
   const prices = pricesFor(config); const cat = catalogOf(config);
   const top = Math.max(2, ...est.steps.map(need));
-  const keys = [...new Set([...CURRENT(prices), ...(est.model ? [est.model.key] : [])])].filter((k) => cat[k]);
+  const keys = [...new Set([...CURRENT(prices, config), ...(est.model ? [est.model.key] : [])])].filter((k) => cat[k]);
   const opts = keys.map((key) => {
     const m = cat[key];
     const usd = [0, 1].map((i) => est.steps.reduce((a, s) => a + stepUsd(s, key, prices)[i], 0));
@@ -189,5 +190,5 @@ export function budgetRule(est, config, resolvedApprovers) {
   const exposure = est.exposure ?? est.usd[1];
   const required = exposure > b.approverAbove;
   const list = resolvedApprovers || b.approvers.filter((x) => !String(x).includes('/')).map((x) => String(x).replace(/^@/, ''));
-  return { required, threshold: b.approverAbove, exposure, approvers: list, teams: b.approvers.filter((x) => String(x).includes('/')) };
+  return { required, threshold: b.approverAbove, exposure, approvers: [...new Set(list)], teams: b.approvers.filter((x) => String(x).includes('/')), unreadable: resolvedApprovers?.unreadable || [], fallback: resolvedApprovers?.fallback || null };
 }

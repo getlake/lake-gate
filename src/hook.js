@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { loadConfig } from './config.js';
 import { repoRoot, stateDir, getState, setState, loadPlan, exportPlan, localStatus } from './store.js';
-import { range } from './estimate.js';
+import { range, costLabel } from './estimate.js';
 
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const inside = (p, dir) => { const r = path.relative(dir, p); return r === '' || (!r.startsWith('..') && !path.isAbsolute(r)); };
@@ -30,7 +30,7 @@ export function handleClaudePreToolUse(input, env = process.env) {
     const { plan, estimate } = exportPlan(root, ti.plan, { source: 'claude-code', sessionId: input.session_id });
     const st = localStatus(root, plan, config);
     const gateNote = st.state === 'approved' || st.state === 'auto-approved' ? `Already ${st.state}` : 'Implementation is gated until a teammate approves this version';
-    return out(null, null, { systemMessage: `Lake: plan saved to .lake/plans/${plan.id}.md (version ${plan.short}, ${estimate.complexity} complexity, est. ${range(estimate.declared ? estimate.plannedUsd : estimate.usd)}${estimate.model ? ` on ${estimate.model.name}` : ""}). ${gateNote}.` });
+    return out(null, null, { systemMessage: `Lake: plan saved to .lake/plans/${plan.id}.md (version ${plan.short}, ${estimate.complexity} complexity, est. ${costLabel(estimate)}). ${gateNote}.` });
   }
 
   if (config.localGate === 'off' || !config.gatedTools.includes(tool)) return null;

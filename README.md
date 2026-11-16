@@ -11,7 +11,7 @@ lake-gate is a small, free, open-source plan gate for teams using Claude Code an
 - **Review app.** Rendered plans, comments on exact lines, review rounds per plan version with a diff between them, verdicts and an activity timeline. Approve or request changes in one click. Run it locally with `npx lake-gate ui`, or use the hosted static app (it talks to the GitHub API straight from your browser). [Live demo with a made-up team](https://getlake.github.io/lake-gate/app/#/demo).
 - **Approve from where you already are.** The Lake review app, GitHub's own **Approve** button, or your agent chat (MCP server for Claude Code and Cursor). They all write to the same place, the PR, so there is one source of truth.
 - **Model and cost per step.** Every plan shows which model runs each step and what that costs, with the same estimator and price table as [lake-meter](https://getlake.github.io/lake-meter/). Declare the model in the plan (`Model: Opus 5.5`, or `(model: haiku)` on a step). Reviewers suggest a cheaper model, a dropped step or a cap, and the author accepts it in one click, which saves a new plan version.
-- **Budget approval (optional).** Above `budget.approverAbove` dollars, one of `budget.approvers` must also approve that exact version. It shows in the app, the PR check and the MCP tools.
+- **Budget approval (optional).** Above `budget.approverAbove` dollars, one of `budget.approvers` (GitHub logins) must also approve that exact version. It shows in the app, the PR check and the MCP tools.
 - **Small plans pass on their own.** Tiny, low-complexity plans are auto-approved by default, and quick fixes without a plan aren't gated at all. Set `autoApprove.mode` to `shadow` or `off` to be stricter.
 
 ## Install (about 10 minutes)
@@ -95,6 +95,7 @@ It's a rough heuristic, the same one lake-meter uses: complexity from keywords, 
 ```
 lake-gate init [--try] [--force]        set up the repo (--try: local-only trial, self-approval allowed)
 lake-gate approve [id]                  approve your own plan (trial mode only)
+lake-gate uninstall                     remove the hook, MCP entries and workflow (keeps .lake/)
 lake-gate plan <file.md|-> [--id name]   save a plan with an estimate and make it active
 lake-gate estimate <file.md|->           print the estimate only
 lake-gate status                         plans, versions, approval state
@@ -119,7 +120,7 @@ lake-gate hook claude                    the Claude Code PreToolUse hook (stdin 
 | `localGate` | `"block"` | Hook behaviour: `block` (deny), `ask` (Claude Code prompts you), `off` |
 | `readOnlyBash` | git status/log/diff, ls, cat, rg... | Bash commands allowed before approval (regexes; chained commands are not) |
 | `autoApprove` | `{mode:"on", maxUsd:1.5, maxSteps:3, maxComplexity:"low"}` | Tiny plans pass without a human. `off`, `shadow` (only report), or `on` |
-| `budget` | `{approverAbove:null, approvers:[]}` | Above this many dollars (upper estimate of the planned model), one of `approvers` (logins or `@org/team`) must also approve |
+| `budget` | `{approverAbove:null, approvers:[]}` | Above this many dollars (upper estimate of the planned model), one of `approvers` must also approve. Use GitHub **logins**, e.g. `["alice","bob"]`. `@org/team` needs a token with `read:org`, which the default Action token doesn't have. When a team can't be read, the summary says so and repo admins can approve instead |
 | `gateWithoutPlan` | `false` | `true` blocks edits even when there's no plan |
 | `provider`, `catalog` | `anthropic`, lake-meter prices | Same shape as lake-meter's price catalog |
 | `nativeReviews` | `true` | GitHub's own Approve / Request changes count for the plan version at the reviewed commit |

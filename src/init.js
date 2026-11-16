@@ -60,3 +60,34 @@ export function init(root, { actionRef = ACTION_REF, force = false, trial = fals
   }
   return done;
 }
+
+// Undo init: remove the hook, the MCP entries and the workflow. Plans and config in .lake/ stay (they're your history).
+export function uninstall(root) {
+  const done = [];
+  const readJson = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; } };
+  const sp = path.join(root, '.claude', 'settings.json');
+  const s = fs.existsSync(sp) && readJson(sp);
+  if (s?.hooks?.PreToolUse) {
+    const before = JSON.stringify(s.hooks.PreToolUse);
+    s.hooks.PreToolUse = s.hooks.PreToolUse.map((g) => ({ ...g, hooks: (g.hooks || []).filter((h) => !String(h.command || '').includes('lake-gate')) })).filter((g) => g.hooks.length);
+    if (!s.hooks.PreToolUse.length) delete s.hooks.PreToolUse;
+    if (!Object.keys(s.hooks).length) delete s.hooks;
+    if (JSON.stringify(s.hooks?.PreToolUse) !== before) {
+      if (Object.keys(s).length) fs.writeFileSync(sp, JSON.stringify(s, null, 2) + '\n'); else fs.rmSync(sp);
+      done.push('removed the lake-gate hook from .claude/settings.json');
+    }
+  }
+  for (const rel of ['.mcp.json', path.join('.cursor', 'mcp.json')]) {
+    const p = path.join(root, rel); const c = fs.existsSync(p) && readJson(p);
+    if (!c?.mcpServers?.['lake-gate']) continue;
+    delete c.mcpServers['lake-gate'];
+    if (!Object.keys(c.mcpServers).length) delete c.mcpServers;
+    if (Object.keys(c).length) fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n'); else fs.rmSync(p);
+    done.push(`removed the lake-gate MCP server from ${rel}`);
+  }
+  const wf = path.join(root, '.github', 'workflows', 'lake-gate.yml');
+  if (fs.existsSync(wf)) { fs.rmSync(wf); done.push('removed .github/workflows/lake-gate.yml'); }
+  for (const d of ['.cursor', path.join('.github', 'workflows'), '.github', '.claude']) { try { fs.rmdirSync(path.join(root, d)); } catch { /* not empty or missing */ } }
+  if (!done.length) done.push('Nothing to remove: lake-gate is not set up here.');
+  return done;
+}

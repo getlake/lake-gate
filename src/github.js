@@ -1,6 +1,6 @@
 import { parseConfig } from './config-core.js';
 import { readPlanText } from './plan.js';
-import { estimatePlan, range, money } from './estimate.js';
+import { estimatePlan, range, money, costLabel } from './estimate.js';
 import { evaluatePlan, isPassing, parseCommands } from './policy.js';
 import { expandEvents } from './review.js';
 import { costSuggestions } from './models.js';
@@ -65,15 +65,22 @@ export async function nativeDigests(gh, events, path, { headSha, headText, confi
   return out;
 }
 
-// Budget approvers: logins as listed, "@org/team" expanded through the API when the token may read the team
-// (an Actions GITHUB_TOKEN usually may not; list logins then).
+// Budget approvers: logins as listed (recommended). "@org/team" is expanded through the API when the token may
+// read the team. An Actions GITHUB_TOKEN usually may not: then we say so in the summary and fall back to any listed
+// login or a repo admin (or the repo owner), so a plan never gets stuck on a team nobody can see.
 export async function resolveBudgetApprovers(gh, config) {
   const b = config.budget || {};
   if (b.approverAbove == null || !(b.approvers || []).length) return undefined;
   const out = b.approvers.filter((x) => !String(x).includes('/')).map((x) => String(x).replace(/^@/, ''));
+  const unreadable = [];
   for (const t of b.approvers.filter((x) => String(x).includes('/'))) {
     const [org, slug] = String(t).replace(/^@/, '').split('/');
-    try { out.push(...(await gh.all(`~/orgs/${org}/teams/${slug}/members`)).map((u) => u.login)); } catch { /* no access to the team */ }
+    try { out.push(...(await gh.all(`~/orgs/${org}/teams/${slug}/members`)).map((u) => u.login)); } catch { unreadable.push(`@${org}/${slug}`); }
+  }
+  out.unreadable = unreadable;
+  if (unreadable.length) {
+    try { out.push(...(await gh.all('/collaborators?permission=admin')).filter((u) => u.permissions?.admin !== false).map((u) => u.login)); out.fallback = 'admins'; }
+    catch { out.fallback = 'owner'; } // can't list admins either: the repo owner (OWNER association) counts
   }
   return out;
 }
@@ -127,11 +134,14 @@ export function renderSummary(ev) {
       r.state === 'changes-requested' ? `changes requested by ${r.blockers.map((a) => '@' + a).join(', ')}` :
       r.state === 'needs-budget' ? `approved by ${r.approvers.map((a) => '@' + a).join(', ')}, **needs budget approval**` : `needs ${r.needed} approval(s)${r.budget?.required ? ' + budget approval' : ''}`;
     const est = r.estimate;
-    const cost = `${range(est.declared ? est.plannedUsd : est.usd)}${est.model ? ` on ${est.model.name}` : ''}${est.cap != null ? ` (cap ${money(est.cap)})` : ''}`;
+    const cost = `${costLabel(est)}${est.cap != null ? ` (cap ${money(est.cap)})` : ''}`;
     lines.push(`| [${r.title.replace(/\|/g, '/')}](${r.path}) | \`${r.short}\` | ${status} | ${est.complexity} | ${cost} |`);
   }
+  for (const r of ev.results.filter((x) => x.budget?.unreadable?.length).slice(0, 1)) {
+    lines.push('', `> **Warning:** couldn't read ${r.budget.unreadable.join(', ')} with this token, so ${r.budget.fallback === 'owner' ? 'the repo owner' : 'repo admins'} and any listed login can give the budget approval. List GitHub logins in \`budget.approvers\` (e.g. \`["alice","bob"]\`) to fix this.`);
+  }
   for (const r of ev.results.filter((x) => x.budget?.required)) {
-    lines.push('', `**Budget approval** for \`${r.id}\`: up to ${money(r.budget.exposure)} is above the team threshold of ${money(r.budget.threshold)}. ${r.budget.satisfied ? `Approved by @${r.budget.approvedBy.join(', @')} for v${r.short}.` : `One of ${r.budget.approvers.map((a) => '@' + a).join(', ') || r.budget.teams.join(', ')} must approve v${r.short} too.`}`);
+    lines.push('', `**Budget approval** for \`${r.id}\`: up to ${money(r.budget.exposure)} is above the team threshold of ${money(r.budget.threshold)}. ${r.budget.satisfied ? `Approved by @${r.budget.approvedBy.join(', @')} for v${r.short}.` : `One of ${[...r.budget.approvers.map((a) => '@' + a), ...(r.budget.fallback === 'owner' ? ['the repo owner'] : [])].join(', ') || r.budget.teams.join(', ')} must approve v${r.short} too.`}`);
   }
   for (const r of ev.results) {
     const sugg = costSuggestions(r.estimate, ev.config || {});
@@ -143,7 +153,7 @@ export function renderSummary(ev) {
     const base = ev.config?.reviewUrl;
     if (base && ev.repo && ev.pr?.number) {
       const img = (n, alt) => `![${alt}](${base}btn/${n}.svg)`;
-      lines.push('', '**Review in one click** (opens the Lake review page for this PR, sign in with GitHub to post):', '');
+      lines.push('', '**Review in one click** (opens the Lake review page; posting needs a GitHub token the first time, or use GitHub\'s own Review changes → Approve):', '');
       for (const r of pending) {
         const link = (act) => `${base}#/pr/${ev.repo}/${ev.pr.number}/${encodeURIComponent(r.id)}${act ? `?do=${act}&v=${r.short}` : ''}`;
         lines.push(`${pending.length > 1 ? `\`${r.id}\` ` : ''}[${img('approve', `Approve v${r.short}`)}](${link('approve')}) [${img('changes', 'Request changes')}](${link('changes')}) [${img('open', 'Open plan review')}](${link('')})`, '');

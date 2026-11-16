@@ -35,8 +35,12 @@ export function estimatePlan(body, config) {
   }, body, config);
 }
 
-export const money = (n) => (n < 0.1 ? `$${n.toFixed(3)}` : n < 10 ? `$${n.toFixed(2)}` : `$${Math.round(n)}`);
-export const range = ([a, b]) => `${money(a)}–${money(b)}`;
+export const money = (n) => (n < 0.01 ? '<$0.01' : n < 0.1 ? `$${n.toFixed(3)}` : n < 10 ? `$${n.toFixed(2)}` : `$${Math.round(n)}`);
+export const range = ([a, b]) => (b < 0.01 ? '<$0.01' : `${money(a)}–${money(b)}`);
+// Which model the cost is for: one plan model, or per-step picks on top of a default.
+export const mixedModels = (est) => !!est.declared && est.steps.some((s) => s.planned && s.planned.name !== est.model?.name);
+export const modelLabel = (est) => (mixedModels(est) ? (est.model ? ` · planned per step (default ${est.model.name})` : ' · planned per step') : est.model ? ` on ${est.model.name}` : '');
+export const costLabel = (est) => `${range(est.declared ? est.plannedUsd : est.usd)}${modelLabel(est)}`;
 
 export function autoApproveVerdict(est, config) {
   const a = config.autoApprove || {};
@@ -59,7 +63,7 @@ export function renderEstimate(est, config) {
   return [
     '## Lake estimate',
     '',
-    `Overall complexity: **${est.complexity}** · ${est.declared ? `Planned model${est.model ? ` **${est.model.name}**` : 's per step'}: **${range(est.plannedUsd)}** · Lake mix (cheapest model that fits each step): ${range(est.usd)}` : `Estimated cost with the recommended model per step: **${range(est.usd)}** (all steps on ${est.baseline}: ${range(est.frontierUsd)})`}${est.cap != null ? ` · Budget cap **${money(est.cap)}**` : ''}`,
+    `Overall complexity: **${est.complexity}** · ${est.declared ? `${mixedModels(est) ? `Planned per step${est.model ? ` (default **${est.model.name}**)` : ''}` : `Planned model${est.model ? ` **${est.model.name}**` : 's per step'}`}: **${range(est.plannedUsd)}** · Lake mix (cheapest model that fits each step): ${range(est.usd)}` : `Estimated cost with the recommended model per step: **${range(est.usd)}** (all steps on ${est.baseline}: ${range(est.frontierUsd)})`}${est.cap != null ? ` · Budget cap **${money(est.cap)}**` : ''}`,
     '',
     est.declared ? '| # | Step | Complexity | Planned model | Recommended model | Est. cost |' : '| # | Step | Complexity | Recommended model | Est. cost |',
     est.declared ? '|---|---|---|---|---|---|' : '|---|---|---|---|---|',

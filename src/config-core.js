@@ -18,7 +18,8 @@ export const DEFAULT_CONFIG = {
   checkButtons: false, // experimental: Approve / Request changes buttons on a GitHub check run (needs checks: write)
   autoApprove: { mode: 'on', maxUsd: 1.5, maxSteps: 3, maxComplexity: 'low' }, // tiny plans pass without a human. mode: "off" | "shadow" | "on"
   // Budget approval: above approverAbove (USD, upper estimate or the plan's "Budget cap") one of approvers
-  // (GitHub logins or "@org/team") must approve the exact version too. Off until you set both.
+  // must approve the exact version too. List GitHub logins, e.g. ["alice", "bob"]. "@org/team" needs a token with
+  // read:org, which the default Action token doesn't have (lake-gate then warns and lets repo admins approve).
   budget: { approverAbove: null, approvers: [], suggestAbove: 0, suggestCapAbove: 10 },
   catalog: {}, // extra models in lake-meter's prices.json shape, e.g. { "my-model": { "label": "My model", "tier": "standard", "input": 1, "cacheRead": 0.1, "output": 5 } }
   provider: 'anthropic', // model family for Lake's picks: "anthropic" | "openai". Prices: lake-meter's table (meter-core.js)

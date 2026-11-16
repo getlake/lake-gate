@@ -29,6 +29,7 @@ function rel(at) {
 const STATUS = { 'in-review': ['In review', 'clock'], 'changes-requested': ['Changes requested', 'undo'], approved: ['Approved', 'check'], 'needs-budget': ['Needs budget OK', 'coin'], 'auto-approved': ['Auto-approved', 'check'], draft: ['Draft', 'pause'], pending: ['In review', 'clock'], 'approved-then-edited': ['Approved, then edited', 'layers'], superseded: ['Superseded', 'layers'] };
 const chip = (st) => `<span class="chip st-${st === 'pending' ? 'in-review' : st}">${icon(STATUS[st]?.[1] || 'dot', 'xs')}${STATUS[st]?.[0] || st}</span>`;
 const costOf = (est) => (est.declared ? est.plannedUsd : est.usd);
+const overridden = (est) => (est.declared ? est.steps.filter((s) => s.planned && s.planned.name !== est.model?.name).length : 0);
 const short = (n) => String(n || '').replace(/^Claude /, '');
 const VERDICT_BADGE = { approved: 'ok', 'changes-requested': 'bad', waiting: 'wait', commented: 'com', revoked: 'wait' };
 const viaIcon = (v) => (String(v).includes('MCP') ? icon('bot', 'xs') : String(v).includes('GitHub') ? icon('gh', 'xs') : '');
@@ -302,7 +303,7 @@ function docView(p, n) {
     const lv = Math.min(4, b.level || 2);
     const raw = String(r.body).split('\n').slice(b.start - 1, b.end).join(' ');
     const decl = b.type !== 'heading' && raw.match(/^\s*(?:\*\*)?(model|budget cap)(?:\*\*)?\s*:(?:\*\*)?\s*(.+)$/i);
-    const tag = b.type === 'heading' ? `<h${lv}>${b.html}</h${lv}>` : decl ? `<p class="declare">${icon(/model/i.test(decl[1]) ? 'cpu' : 'coin', 's')}<span>${/model/i.test(decl[1]) ? 'Runs on' : 'Budget cap'}</span><b>${esc(/model/i.test(decl[1]) && r.estimate.model ? r.estimate.model.name : decl[2].replace(/\*/g, ''))}</b></p>` : b.html;
+    const tag = b.type === 'heading' ? `<h${lv}>${b.html}</h${lv}>` : decl ? `<p class="declare">${icon(/model/i.test(decl[1]) ? 'cpu' : 'coin', 's')}<span>${/model/i.test(decl[1]) ? (overridden(r.estimate) ? 'Default model' : 'Runs on') : 'Budget cap'}</span><b>${esc(/model/i.test(decl[1]) && r.estimate.model ? r.estimate.model.name : decl[2].replace(/\*/g, ''))}</b>${/model/i.test(decl[1]) && overridden(r.estimate) ? `<span>· ${overridden(r.estimate)} step${overridden(r.estimate) > 1 ? 's' : ''} overridden</span>` : ''}</p>` : b.html;
     const foc = ts.some((t) => t.id === S.focus) || inC(b.start, b.end);
     out.push(`<div class="blk ${ts.length ? 'has' : ''} ${foc ? 'focus' : ''}" data-s="${b.start}" data-e="${b.end}"><span class="gut"><span class="ln">${b.start}</span>${b.type !== 'hr' ? addBtn(b.start, b.end) : ''}</span><div class="body">${tag}</div></div>`);
     out.push(thr(ts, b.start, b.end, 34));
@@ -344,7 +345,7 @@ function costCard(p, n) {
   const curKey = est.model ? est.model.key : est.declared ? null : 'lake-mix';
   const opts = isCur && p.modelOptions ? `<details class="models"${S.modelsOpen ? ' open' : ''}><summary data-act="models-toggle">${icon('cpu', 's')}Compare models${icon('chevd', 'xs')}</summary>${p.modelOptions.map((o) => `<div class="mo ${o.fit} ${o.key === curKey ? 'cur' : ''}"><div class="grow"><span class="nm">${esc(short(o.name))}${o.recommended ? '<i>Lake pick</i>' : ''}${o.key === curKey ? '<i class="c">in plan</i>' : ''}</span><span class="nt">${esc(o.note)}</span></div><span class="num pr">${range(o.usd)}</span>${o.key !== curKey && o.key !== 'lake-mix' ? act(`data-act="${author ? 'use-model' : 'suggest-model'}" data-m="${esc(o.key)}"`, author ? 'Use' : 'Suggest') : ''}</div>`).join('')}</details>` : '';
   return `<section class="card cost" aria-label="Model and cost"><h4>${icon('coin', 's')}Model &amp; cost<span class="r">${esc(est.complexity)} complexity</span></h4>
-    <div class="est-total num">${range(planned)}</div><div class="est-sub">${est.model ? `on <b>${esc(short(est.model.name))}</b>` : est.declared ? 'models set per step' : 'Lake pick per step · no model set in the plan'}${est.cap != null ? ` · capped at ${money(est.cap)}` : ''}</div>
+    <div class="est-total num">${range(planned)}</div><div class="est-sub">${overridden(est) ? `planned per step${est.model ? ` (default <b>${esc(short(est.model.name))}</b>)` : ''}` : est.model ? `on <b>${esc(short(est.model.name))}</b>` : est.declared ? 'models set per step' : 'Lake pick per step · no model set in the plan'}${est.cap != null ? ` · capped at ${money(est.cap)}` : ''}</div>
     ${budget}
     ${est.steps.map((s) => { const u = s.planned ? s.planned.usd : s.usd; const m = s.planned ? s.planned.name : s.model; return `<div class="step"><span class="sn">${s.n}</span><span class="st" title="${esc(s.title)}">${esc(s.title)}</span><span class="mchip ${s.complexity} ${s.fit}" title="${s.fit === 'risky' ? 'May be too weak for this step' : s.fit === 'overkill' ? `More than this step needs. Lake pick: ${esc(s.model)}` : esc(s.complexity) + ' complexity'}">${s.fit === 'risky' ? '! ' : ''}${esc(short(m))}</span><span class="bar"><i class="${s.complexity}" style="width:${Math.max(6, (u[1] / max) * 100)}%"></i></span></div>`; }).join('')}
     ${saveHtml}${opts}
@@ -438,7 +439,7 @@ function roundsView(p) {
         <a class="btn sm" href="${planHref(p)}${r.current ? '' : `?round=${r.n}`}">Read</a>${r.n > 1 ? `<a class="btn sm" href="${planHref(p, `/diff/${r.n - 1}/${r.n}`)}">${icon('diff', 's')}Changes</a>` : ''}</div>
       <div class="rmeta"><span class="who">${avatar(r.author || p.author, 'sm')}${esc(first(r.author || p.author))} ${r.n === 1 ? 'opened the plan' : 'revised it'}</span><span>${rel(r.at)}</span>
         ${r.stats ? `<span><span class="plus">+${r.stats.added}</span> <span class="minus">−${r.stats.removed}</span> lines</span>` : ''}
-        <span class="num">${range(costOf(r.estimate))}${r.estimate.model ? ` · ${esc(short(r.estimate.model.name))}` : ''}${Math.abs(delta) > 0.005 ? ` <span class="${delta > 0 ? 'minus' : 'plus'}">(${delta > 0 ? '+' : '−'}${money(Math.abs(delta))})</span>` : ''}</span>
+        <span class="num">${range(costOf(r.estimate))}${r.estimate.model ? ` · ${esc(short(r.estimate.model.name))}${overridden(r.estimate) ? ' + per step' : ''}` : ''}${Math.abs(delta) > 0.005 ? ` <span class="${delta > 0 ? 'minus' : 'plus'}">(${delta > 0 ? '+' : '−'}${money(Math.abs(delta))})</span>` : ''}</span>
         <span>${th.length} thread${th.length === 1 ? '' : 's'}${th.length ? `, ${resolved} resolved` : ''}</span></div>
       ${r.verdicts.map(verdictLine).join('')}
       ${!r.verdicts.length ? `<div class="rmeta" style="margin-top:10px">${r.current ? 'No verdicts on this round yet.' : 'Superseded before anyone gave a verdict.'}</div>` : ''}

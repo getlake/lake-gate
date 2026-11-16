@@ -17,6 +17,7 @@ export function parseCommands(body) {
 export function evaluatePlan({ plan, estimate, events, prAuthor, config, budgetApprovers }) {
   const approvals = new Map();
   const blockers = new Map();
+  const assoc = new Map();
   const notes = [];
   const sorted = [...events].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
   for (const ev of sorted) {
@@ -33,7 +34,7 @@ export function evaluatePlan({ plan, estimate, events, prAuthor, config, budgetA
       if (ineligible) { notes.push(`ignored ${c.action} from @${who}: ${ineligible}`); continue; }
       const matches = c.digest && plan.digest.startsWith(c.digest);
       if (!matches) { notes.push(`ignored ${c.action} from @${who}: ${c.digest ? `refers to version ${c.digest.slice(0, 8)}, current is ${plan.short}` : 'missing version'} (edits invalidate approval)`); continue; }
-      if (c.action === 'approve') { approvals.set(who, ev.createdAt); blockers.delete(who); }
+      if (c.action === 'approve') { approvals.set(who, ev.createdAt); assoc.set(who, ev.association); blockers.delete(who); }
       else { blockers.set(who, ev.createdAt); approvals.delete(who); }
     }
   }
@@ -42,7 +43,7 @@ export function evaluatePlan({ plan, estimate, events, prAuthor, config, budgetA
   // (their approval also counts toward requiredApprovals).
   const rule = estimate ? budgetRule(estimate, config, budgetApprovers) : { required: false };
   const lc = (x) => String(x).toLowerCase();
-  const budgetBy = rule.required ? [...approvals.keys()].filter((a) => rule.approvers.some((b) => lc(b) === lc(a))) : [];
+  const budgetBy = rule.required ? [...approvals.keys()].filter((a) => rule.approvers.some((b) => lc(b) === lc(a)) || (rule.fallback === 'owner' && assoc.get(a) === 'OWNER')) : [];
   const budget = rule.required ? { ...rule, approvedBy: budgetBy, satisfied: budgetBy.length > 0 } : { required: false, satisfied: true };
   let state;
   if (blockers.size) state = 'changes-requested';
