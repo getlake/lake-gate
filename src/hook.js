@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { loadConfig, configWarning } from './config.js';
-import { repoRoot, stateDir, getState, setState, loadPlan, exportPlan, localStatus, markGated, localCodeLines } from './store.js';
+import { repoRoot, stateDir, getState, setState, loadPlan, exportPlan, localStatus, markGated, localCodeLines, branchPlanIds } from './store.js';
 import { range, costLabel } from './estimate.js';
 
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -67,8 +67,16 @@ export function handleClaudePreToolUse(input, env = process.env) {
 
   const decision = config.localGate === 'ask' ? 'ask' : 'deny';
   const state = getState(root);
-  const activeId = (input.session_id && state.sessions[input.session_id]) || state.active;
-  const plan = activeId && loadPlan(root, activeId);
+  // Which plan gates this work, re-resolved on every call so it follows `git checkout`: this session's plan,
+  // else the plans this branch changes (all of them must pass), else the last active plan if it's in this checkout.
+  const sessionPlan = input.session_id && state.sessions[input.session_id] && loadPlan(root, state.sessions[input.session_id]);
+  const onBranch = sessionPlan ? [] : branchPlanIds(root);
+  const candidates = sessionPlan ? [sessionPlan]
+    : onBranch.length ? [...onBranch].sort((a, b) => (b === state.active) - (a === state.active)).map((id) => loadPlan(root, id))
+    : [state.active && loadPlan(root, state.active)].filter(Boolean);
+  const codeLines = candidates.length ? localCodeLines(root) + (FILE_TOOLS.has(tool) ? String(ti.content || ti.new_string || (ti.edits || []).map((e) => e.new_string).join('\n') || '').split('\n').length : 0) : 0;
+  const statuses = candidates.map((p) => [p, localStatus(root, p, config, { codeLines })]);
+  const [plan, st] = statuses.find(([, x]) => x.state !== 'approved' && x.state !== 'auto-approved') || statuses[0] || [];
   if (!plan) {
     // Only planned work is gated, so installing lake-gate never blocks a typo fix. Teams that want every
     // change planned set "gateWithoutPlan": true.
@@ -78,8 +86,6 @@ export function handleClaudePreToolUse(input, env = process.env) {
     state.noticed = [...(state.noticed || []).slice(-50), sid]; setState(root, state);
     return out(null, null, { systemMessage: 'lake-gate: no plan for this task, so it is not gated. Use plan mode to gate bigger work.' });
   }
-  const added = String(ti.content || ti.new_string || (ti.edits || []).map((e) => e.new_string).join('\n') || '').split('\n').length;
-  const st = localStatus(root, plan, config, { codeLines: localCodeLines(root) + (FILE_TOOLS.has(tool) ? added : 0) });
   if (st.state === 'approved' || st.state === 'auto-approved') return null;
   if (!st.stale && st.state === 'pending') { const s2 = getState(root); if (!s2.gated?.[plan.id]) setState(root, markGated(s2, plan.id)); }
   if (st.autoReasons?.some((x) => /changed lines/.test(x)) && !(st.autoReasons || []).some((x) => !/changed lines/.test(x))) {

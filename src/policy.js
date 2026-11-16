@@ -19,11 +19,13 @@ export function evaluatePlan({ plan, estimate, events, prAuthor, config, budgetA
   const blockers = new Map();
   const assoc = new Map();
   const notes = [];
+  // Malformed commands (no plan id, no version): one hint per person, gone once they post a valid command.
+  const typos = new Map();
   const sorted = [...events].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
   for (const ev of sorted) {
     for (const c of parseCommands(ev.body)) {
       if (c.id && c.id !== plan.id) continue;
-      if (!c.id) { notes.push(`@${ev.login}: "/lake ${c.action}" needs a plan id, e.g. /lake ${c.action} ${plan.id}@${plan.short}`); continue; }
+      if (!c.id) { typos.set(ev.login, `@${ev.login}: "/lake ${c.action}" needs a plan id and version: /lake ${c.action} ${plan.id}@${plan.short}`); continue; }
       const who = ev.login;
       const ineligible =
         ev.type === 'Bot' ? 'bots and agents cannot approve' :
@@ -33,11 +35,14 @@ export function evaluatePlan({ plan, estimate, events, prAuthor, config, budgetA
       if (c.action === 'revoke') { approvals.delete(who); continue; }
       if (ineligible) { notes.push(`ignored ${c.action} from @${who}: ${ineligible}`); continue; }
       const matches = c.digest && plan.digest.startsWith(c.digest);
-      if (!matches) { notes.push(`ignored ${c.action} from @${who}: ${c.digest ? `refers to version ${c.digest.slice(0, 8)}, current is ${plan.short}` : 'missing version'} (edits invalidate approval)`); continue; }
+      if (!c.digest) { typos.set(who, `@${who}: missing version in "/lake ${c.action} ${c.id}": use /lake ${c.action} ${plan.id}@${plan.short}`); continue; }
+      typos.delete(who);
+      if (!matches) { notes.push(`ignored ${c.action} from @${who}: ${c.digest ? `refers to version ${c.digest.slice(0, 8)}, current is ${plan.short}` : ''} (edits invalidate approval)`); continue; }
       if (c.action === 'approve') { approvals.set(who, ev.createdAt); assoc.set(who, ev.association); blockers.delete(who); }
       else { blockers.set(who, ev.createdAt); approvals.delete(who); }
     }
   }
+  notes.push(...typos.values());
   const auto = estimate ? autoApproveVerdict(estimate, config, autoContext) : { eligible: false, mode: 'off', reasons: [] };
   // Budget: above config.budget.approverAbove one of the budget approvers must approve this exact version too
   // (their approval also counts toward requiredApprovals).

@@ -104,8 +104,18 @@ export function localStatus(root, plan, config = loadConfig(root), ctx = {}) {
 
 // Changed lines of code outside .lake/ in this checkout, compared with where the branch left the default branch
 // (or HEAD when there is no remote): committed + uncommitted + untracked. Used to keep auto-approve small.
+const branchBase = (root) => ['origin/HEAD', 'origin/main', 'origin/master', 'main', 'master'].map((r) => git(root, ['merge-base', 'HEAD', r])).find(Boolean) || (git(root, ['rev-parse', '--verify', 'HEAD']) ? 'HEAD' : null);
+
+// Plans this branch adds or changes (committed since it left the default branch, uncommitted, or untracked).
+// The hook re-reads this on every call (2 git commands), so the gate follows `git checkout`.
+export function branchPlanIds(root) {
+  const base = branchBase(root);
+  const files = [base ? git(root, ['diff', '--name-only', base, '--', '.lake/plans']) : '', git(root, ['ls-files', '--others', '--exclude-standard', '--', '.lake/plans'])].join('\n');
+  return [...new Set(String(files).split('\n').filter((f) => /^\.lake\/plans\/[^/]+\.md$/.test(f) && !f.endsWith('/README.md')).map((f) => f.slice(11, -3)))].filter((id) => loadPlan(root, id));
+}
+
 export function localCodeLines(root) {
-  const base = ['origin/HEAD', 'origin/main', 'origin/master'].map((r) => git(root, ['merge-base', 'HEAD', r])).find(Boolean) || (git(root, ['rev-parse', '--verify', 'HEAD']) ? 'HEAD' : null);
+  const base = branchBase(root);
   let n = 0;
   const num = base ? git(root, ['diff', '--numstat', base, '--', '.', ':(exclude).lake']) : '';
   for (const l of String(num || '').split('\n')) { const [a, d] = l.split('\t'); n += (Number(a) || 0) + (Number(d) || 0); }
