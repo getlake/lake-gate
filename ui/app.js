@@ -26,8 +26,10 @@ function rel(at) {
   if (d < 60 * 48) return 'yesterday'; if (d < 60 * 24 * 7) return `${Math.round(d / 1440)}d ago`;
   return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
-const STATUS = { 'in-review': ['In review', 'clock'], 'changes-requested': ['Changes requested', 'undo'], approved: ['Approved', 'check'], 'auto-approved': ['Auto-approved', 'check'], draft: ['Draft', 'pause'], pending: ['In review', 'clock'], 'approved-then-edited': ['Approved, then edited', 'layers'], superseded: ['Superseded', 'layers'] };
+const STATUS = { 'in-review': ['In review', 'clock'], 'changes-requested': ['Changes requested', 'undo'], approved: ['Approved', 'check'], 'needs-budget': ['Needs budget OK', 'coin'], 'auto-approved': ['Auto-approved', 'check'], draft: ['Draft', 'pause'], pending: ['In review', 'clock'], 'approved-then-edited': ['Approved, then edited', 'layers'], superseded: ['Superseded', 'layers'] };
 const chip = (st) => `<span class="chip st-${st === 'pending' ? 'in-review' : st}">${icon(STATUS[st]?.[1] || 'dot', 'xs')}${STATUS[st]?.[0] || st}</span>`;
+const costOf = (est) => (est.declared ? est.plannedUsd : est.usd);
+const short = (n) => String(n || '').replace(/^Claude /, '');
 const VERDICT_BADGE = { approved: 'ok', 'changes-requested': 'bad', waiting: 'wait', commented: 'com', revoked: 'wait' };
 const viaIcon = (v) => (String(v).includes('MCP') ? icon('bot', 'xs') : String(v).includes('GitHub') ? icon('gh', 'xs') : '');
 const viewer = () => S.ws?.viewer || null;
@@ -42,6 +44,7 @@ const track = (path) => { try { window.goatcounter?.count?.({ path: `app-${path}
 
 function needsMe(p) {
   const me = viewer();
+  if (me && p.status === 'needs-budget' && p.budget?.approvers?.includes(me) && p.author !== me) return true;
   if (!me || p.status !== 'in-review' || p.author === me) return false;
   const r = p.reviewers.find((x) => x.login === me);
   return !(r && r.current && (r.verdict === 'approved' || r.verdict === 'changes-requested'));
@@ -129,7 +132,7 @@ function rail() {
   const a = (href, key, ic, label, count) => `<a href="${href}" ${cur === key ? 'aria-current="page"' : ''}>${icon(ic)}${label}${count}</a>`;
   return `
   <aside class="rail" aria-label="Navigation">
-    <a class="brand" href="${S.base}"><img src="logo-mark.svg" alt=""><span>Lake<span class="dot">.</span></span><span class="tag">review</span></a>
+    <a class="brand" href="${S.base}"><img src="logo-mark.svg" alt="" data-act="boat"><span>Lake<span class="dot">.</span></span><span class="tag">review</span></a>
     <a class="repo" href="#/connect" title="Switch repository"><span class="sq">${esc((repoLabel.split('/')[0] || 'L')[0].toUpperCase())}</span><span><b>${esc(repoLabel)}</b><small>${isDemo ? 'Demo · fictional team' : S.src?.mode === 'local' ? 'Local · your checkout' : 'GitHub'}</small></span>${icon('chevd', 's')}</a>
     <nav class="nav"><span class="lbl">Review</span>
       ${a(S.base, 'plans', 'layers', 'Plans', `<span class="count">${plans.length}</span>`)}
@@ -141,8 +144,9 @@ function rail() {
       <button class="keys" data-act="help">${icon('kbd', 's')}Keyboard shortcuts <kbd>?</kbd></button>
     </div>
   </aside>
-  <div class="topbar"><a class="brand" href="${S.base}"><img src="logo-mark.svg" alt=""><span>Lake<span class="dot">.</span></span></a>${isDemo ? '<span class="demo-flag">Demo</span>' : ''}<nav>
-    <a href="${S.base}" ${cur === 'plans' ? 'aria-current="page"' : ''}>Plans</a><a href="${S.base}/needs" ${cur === 'needs' ? 'aria-current="page"' : ''}>Needs you${needs ? ` · ${needs}` : ''}</a><a href="${S.base}/activity" ${cur === 'activity' ? 'aria-current="page"' : ''}>Activity</a></nav></div>`;
+  <div class="topbar"><a class="brand" href="${S.base}"><img src="logo-mark.svg" alt="" data-act="boat"><span>Lake<span class="dot">.</span></span></a>${isDemo ? '<span class="demo-flag">Demo</span>' : ''}<nav>
+    <a href="${S.base}" ${cur === 'plans' ? 'aria-current="page"' : ''}>Plans</a><a href="${S.base}/needs" ${cur === 'needs' ? 'aria-current="page"' : ''}>Needs you${needs ? ` · ${needs}` : ''}</a><a href="${S.base}/activity" ${cur === 'activity' ? 'aria-current="page"' : ''}>Activity</a></nav></div>
+  ${isDemo ? `<div class="mdemo">${icon('spark', 'xs')}<span>Demo · fictional team · nothing leaves this tab</span><button class="linkbtn" data-act="demo-reset">Reset</button></div>` : ''}`;
 }
 
 // ---------- dashboard ----------
@@ -174,7 +178,7 @@ function spotlight(top) {
     <p>${esc(first(top.author))} ${top.round > 1 ? `sent round ${top.round}${askers.length ? ` after ${askers.join(' and ')} asked for changes` : ''}` : 'asked for your review'}. ${need ? `It needs ${need} more approval${need > 1 ? 's' : ''}.` : ''}</p>
     <div class="row"><a class="btn primary" href="${planHref(top)}">Review round ${top.round} ${icon('arrow', 's')}</a>
       ${r.stats ? `<span class="sub" style="margin:0;font-size:13px"><span class="plus">+${r.stats.added}</span> <span class="minus">−${r.stats.removed}</span> lines since round ${top.round - 1}</span>` : ''}
-      <span class="sub num" style="margin:0;font-size:13px">${range(top.estimate.usd)} est.</span></div>
+      <span class="sub num" style="margin:0;font-size:13px">${range(costOf(top.estimate))} est.</span></div>
   </div><div class="scene">${scene('sp')}<div class="float">${avatar(appr?.login || top.author, 'lg', appr ? 'ok' : '')}<span><b>${appr ? `${esc(first(appr.login))} approved v${top.short}` : `Round ${top.round} is ready`}</b>Catch it in the plan, not in the PR.</span></div></div></section>`;
 }
 function dash() {
@@ -185,7 +189,7 @@ function dash() {
   const f = route.filter || (S.filter === 'needs' ? 'all' : S.filter);
   if (S.sel >= list.length) S.sel = Math.max(0, list.length - 1);
   const inRev = ps.filter((p) => p.status === 'in-review');
-  const cost = inRev.reduce((a, p) => [a[0] + p.estimate.usd[0], a[1] + p.estimate.usd[1]], [0, 0]);
+  const cost = inRev.reduce((a, p) => [a[0] + costOf(p.estimate)[0], a[1] + costOf(p.estimate)[1]], [0, 0]);
   const openThreads = ps.reduce((a, p) => a + p.openThreads, 0);
   const count = (k) => ps.filter((p) => matchesFilter(p, k)).length;
   return `
@@ -214,7 +218,7 @@ function dash() {
         <span class="meta">${chip(p.status)}${needsMe(p) ? `<span class="needs">${icon('dot', 'xs')}Needs you</span>` : ''}<span>${esc(first(p.author))}</span><span class="sep"></span>${p.pr ? `<span>#${p.pr.number}</span><span class="sep"></span>` : p.local ? '<span>local</span><span class="sep"></span>' : ''}${roundDots(p)}<span>round ${p.round}</span></span>
       </span></span>
       <span class="rvw">${reviewerStack(p)}</span>
-      <span class="cost num">${range(p.estimate.usd)}</span>
+      <span class="cost num">${range(costOf(p.estimate))}</span>
       <span class="thr ${p.openThreads ? 'open' : ''}">${icon('msg', 's')}${p.openThreads}</span>
       <span class="when">${rel(p.lastActivity)}</span>
       <span class="chev">${icon('chev', 's')}</span>
@@ -228,7 +232,8 @@ function findPlan() {
   const ps = S.ws.plans.filter((p) => p.id === route.id);
   return (route.pr && ps.find((p) => p.pr?.number === route.pr)) || ps.find((p) => p.pr?.state === 'open') || ps[0];
 }
-const stepFor = (p, text) => p.estimate.steps.find((s) => text.startsWith(s.title.slice(0, 60)));
+const plainT = (x) => String(x).replace(/[`*_]/g, '').replace(/\s*[([]\s*model\s*:[^)\]]*[)\]]/i, '').trim();
+const stepFor = (p, text) => p.estimate.steps.find((s) => plainT(text).startsWith(plainT(s.title).slice(0, 60)));
 function threadsForRound(p, n) {
   const r = p.rounds[n - 1];
   if (r.current) return p.threads.filter((t) => !t.outdated).map((t) => ({ ...t, pos: t.current }));
@@ -240,14 +245,27 @@ function threadCard(p, t, readOnly, viewN = p.round) {
   if (!expanded) {
     return `<div class="thread res" id="t-${esc(t.id)}"><button class="collapsed" data-act="toggle-thread" data-t="${esc(t.id)}">${icon('check', 's')}<span><b>${esc(first(t.resolvedBy || t.comments[0]?.login))}</b> resolved ${esc(first(t.comments[0]?.login))}'s comment · ${t.comments.length} message${t.comments.length > 1 ? 's' : ''}</span>${from}${icon('chevd', 's')}</button></div>`;
   }
-  const where = `${t.anchor?.heading ? `${esc(t.anchor.heading)} · ` : ''}${t.pos ? `line ${t.pos.start}${t.pos.end > t.pos.start ? `–${t.pos.end}` : ''}` : 'Whole plan'}`;
+  const where = t.suggestion ? `<b>${esc(first(t.suggestion.by))}</b> suggests a change` : `${t.anchor?.heading ? `${esc(t.anchor.heading)} · ` : ''}${t.pos ? `line ${t.pos.start}${t.pos.end > t.pos.start ? `–${t.pos.end}` : ''}` : 'Whole plan'}`;
   const ctl = readOnly ? '' : t.resolved ? `<button class="btn sm ghost" data-act="reopen" data-t="${esc(t.id)}">Reopen</button>` : t.source === 'github' ? '' : `<button class="btn sm" data-act="resolve" data-t="${esc(t.id)}">${icon('check', 's')}Resolve</button>`;
   return `<div class="thread ${t.resolved ? 'res' : ''}" id="t-${esc(t.id)}">
     <div class="th">${icon('msg', 's')}<span class="grow">${where}${t.resolved ? ` · resolved by ${esc(first(t.resolvedBy))}` : ''}</span>${from}${t.source === 'github' ? `<span class="via">${icon('gh', 'xs')}GitHub line comment</span>` : ''}${ctl}</div>
     ${t.anchor?.quote && t.n !== viewN ? `<div class="quote">${esc(t.anchor.quote.slice(0, 220))}</div>` : ''}
+    ${t.suggestion ? suggestionBox(p, t, readOnly) : ''}
     ${t.comments.map((c) => `<div class="cmt">${avatar(c.login)}<div><div class="hd"><b>${esc(person(c.login))}</b><span>${rel(c.at)}</span></div><div class="txt">${inline(c.text)}</div></div></div>`).join('')}
     ${readOnly ? '<div style="height:12px"></div>' : `<div class="tf">${viewer() ? avatar(viewer(), 'sm') : ''}<input data-reply="${esc(t.id)}" placeholder="Reply…  Enter to send" aria-label="Reply"></div>`}
   </div>`;
+}
+function savingOf(p, sg) {
+  if (sg.saving) return sg.saving[1];
+  if (sg.patch?.type === 'planModel') { const o = p.modelOptions.find((x) => x.key === sg.patch.model || x.name === sg.patch.model); const cur = p.estimate.declared ? p.estimate.plannedUsd[1] : p.estimate.usd[1]; return o ? cur - o.usd[1] : 0; }
+  return 0;
+}
+function suggestionBox(p, t, readOnly) {
+  const sg = t.suggestion; const save = savingOf(p, sg);
+  const can = !readOnly && viewer() === p.author && !sg.accepted && !t.resolved && p.pr?.state === 'open';
+  return `<div class="sugg ${sg.accepted ? 'done' : ''}"><span class="ic">${icon(sg.accepted ? 'check' : 'spark', 's')}</span><div class="grow"><b>${esc(sg.title)}</b>
+    <span>${sg.accepted ? `Accepted by ${esc(first(sg.acceptedBy))}${sg.newVersion ? ` · now v${esc(sg.newVersion)}` : ''}` : save > 0.005 ? `Saves up to <b class="num">${money(save)}</b>` : save < -0.005 ? `Costs up to ${money(-save)} more` : 'Same cost'}</span></div>
+    ${can ? `<button class="btn sm primary" data-act="accept" data-t="${esc(t.id)}">${icon('check', 's')}Accept</button>` : ''}</div>`;
 }
 function composer(p) {
   const c = S.compose;
@@ -275,14 +293,16 @@ function docView(p, n) {
         const foc = ts.some((t) => t.id === S.focus) || inC(it.start, it.end);
         out.push(`<div class="li ${ts.length ? 'has' : ''} ${foc ? 'focus' : ''}" data-s="${it.start}" data-e="${it.end}"><span class="gut">${addBtn(it.start, it.end)}</span>
           <span class="mk ${b.ordered ? '' : 'b'}">${b.ordered ? `${it.num}.` : ''}</span>
-          <div class="tx">${inline(it.text)}${st ? `<span class="cost"><span class="mchip ${st.complexity}" title="${esc(st.complexity)} complexity: ${esc(st.reasons.join(', '))}">${esc(st.model.replace(/^Claude /, ''))}</span><span class="num" style="font-size:12px;color:var(--muted)">${range(st.usd)}</span></span>` : ''}${it.sub.length ? `<ul>${it.sub.map((x) => `<li>${inline(x)}</li>`).join('')}</ul>` : ''}</div></div>`);
+          <div class="tx">${inline(it.text)}${st ? `<span class="cost"><span class="mchip ${st.complexity} ${st.fit || ''}" title="${esc(st.complexity)} complexity: ${esc(st.reasons.join(', '))}${st.planned && st.fit !== 'ok' ? ` · Lake pick: ${esc(st.model)}` : ''}">${st.fit === 'risky' ? '! ' : ''}${esc(short(st.planned ? st.planned.name : st.model))}</span><span class="num" style="font-size:12px;color:var(--muted)">${range(st.planned ? st.planned.usd : st.usd)}</span></span>` : ''}${it.sub.length ? `<ul>${it.sub.map((x) => `<li>${inline(x)}</li>`).join('')}</ul>` : ''}</div></div>`);
         out.push(thr(ts, it.start, it.end, 60));
       }
       continue;
     }
     const ts = forRange(b.start, b.end);
     const lv = Math.min(4, b.level || 2);
-    const tag = b.type === 'heading' ? `<h${lv}>${b.html}</h${lv}>` : b.html;
+    const raw = String(r.body).split('\n').slice(b.start - 1, b.end).join(' ');
+    const decl = b.type !== 'heading' && raw.match(/^\s*(?:\*\*)?(model|budget cap)(?:\*\*)?\s*:(?:\*\*)?\s*(.+)$/i);
+    const tag = b.type === 'heading' ? `<h${lv}>${b.html}</h${lv}>` : decl ? `<p class="declare">${icon(/model/i.test(decl[1]) ? 'cpu' : 'coin', 's')}<span>${/model/i.test(decl[1]) ? 'Runs on' : 'Budget cap'}</span><b>${esc(/model/i.test(decl[1]) && r.estimate.model ? r.estimate.model.name : decl[2].replace(/\*/g, ''))}</b></p>` : b.html;
     const foc = ts.some((t) => t.id === S.focus) || inC(b.start, b.end);
     out.push(`<div class="blk ${ts.length ? 'has' : ''} ${foc ? 'focus' : ''}" data-s="${b.start}" data-e="${b.end}"><span class="gut"><span class="ln">${b.start}</span>${b.type !== 'hr' ? addBtn(b.start, b.end) : ''}</span><div class="body">${tag}</div></div>`);
     out.push(thr(ts, b.start, b.end, 34));
@@ -301,7 +321,7 @@ function reviewCard(p) {
     const label = r.verdict === 'approved' ? (r.current ? `Approved v${r.short}` : `Approved round ${r.n}, not this version`)
       : r.verdict === 'changes-requested' ? (r.current ? `Requested changes on v${r.short}` : `Asked for changes in round ${r.n} · hasn't seen round ${p.round}`)
         : r.verdict === 'waiting' ? 'Review requested' : r.verdict === 'revoked' ? 'Withdrew approval' : 'Commented';
-    return `<div class="rv">${avatar(r.login, '', stale ? 'wait' : VERDICT_BADGE[r.verdict])}<div><div class="n">${esc(person(r.login))}${r.login === viewer() ? ' <span class="chip soft" style="height:18px;font-size:11px">you</span>' : ''}</div><div class="d">${label}${r.via && r.current ? ` · <span class="via">${viaIcon(r.via)}${esc(r.via)}</span>` : ''}</div></div><span class="d">${rel(r.at)}</span>${r.text && r.current ? `<div class="note2">${inline(r.text)}</div>` : ''}</div>`;
+    return `<div class="rv">${avatar(r.login, '', stale ? 'wait' : VERDICT_BADGE[r.verdict])}<div><div class="n">${esc(person(r.login))}${r.login === viewer() ? ' <span class="chip soft" style="height:18px;font-size:11px">you</span>' : ''}${r.budget ? ` <span class="chip soft budget-tag" style="height:18px;font-size:11px">${icon('coin', 'xs')}budget</span>` : ''}</div><div class="d">${label}${r.via && r.current ? ` · <span class="via">${viaIcon(r.via)}${esc(r.via)}</span>` : ''}</div></div><span class="d">${rel(r.at)}</span>${r.text && r.current ? `<div class="note2">${inline(r.text)}</div>` : ''}</div>`;
   }).join('');
   return `<section class="card" aria-label="Review"><h4>${icon('check', 's')}Review<span class="r">${ok} of ${total} approval${total > 1 ? 's' : ''}</span></h4>
     <div class="meter" aria-hidden="true">${Array.from({ length: total }, (_, i) => `<span style="width:${100 / total}%;background:${i < ok ? 'var(--ok)' : 'transparent'};border-right:2px solid #fff"></span>`).join('')}</div>
@@ -309,12 +329,27 @@ function reviewCard(p) {
     ${p.policy.auto?.mode === 'shadow' && p.policy.auto.eligible ? '<p class="fine">Small and cheap: the auto-approve policy (shadow mode) would pass this plan. A human still decides.</p>' : ''}
   </section>`;
 }
-function estimateCard(est) {
-  const max = Math.max(...est.steps.map((s) => s.usd[1]), 0.0001);
-  return `<section class="card" aria-label="Cost estimate"><h4>${icon('coin', 's')}Agent cost estimate<span class="r">${esc(est.complexity)} complexity</span></h4>
-    <div class="est-total num">${range(est.usd)}</div><div class="est-sub">recommended model per step · all on the top model ${range(est.frontierUsd)}</div>
-    ${est.steps.map((s) => `<div class="step"><span class="sn">${s.n}</span><span class="st" title="${esc(s.title)}">${esc(s.title)}</span><span class="mchip ${s.complexity}">${esc(s.model.replace(/^Claude /, ''))}</span><span class="bar"><i class="${s.complexity}" style="width:${Math.max(6, (s.usd[1] / max) * 100)}%"></i></span></div>`).join('')}
-    <p class="fine">Rough forecast from keywords and API list prices (${esc(est.pricesAsOf)}). Not a quote or a cap.</p></section>`;
+function costCard(p, n) {
+  const r = p.rounds[n - 1]; const est = r.estimate; const isCur = r.current;
+  const planned = est.declared ? est.plannedUsd : est.usd;
+  const author = !!viewer() && viewer() === p.author;
+  const canAct = isCur && S.src.canWrite && !!p.pr && p.pr.state === 'open';
+  const max = Math.max(...est.steps.map((s) => (s.planned ? s.planned.usd[1] : s.usd[1])), 0.0001);
+  const b = isCur ? p.budget : null;
+  const budget = b?.required ? `<div class="budget ${b.satisfied ? 'ok' : ''}">${icon(b.satisfied ? 'check' : 'lock', 's')}<span>${b.satisfied ? `Budget OK from <b>${esc(first(b.approvedBy[0]))}</b> for v${p.short}` : `Over the team's ${money(b.threshold)} line. <b>${b.approvers.map((a) => esc(first(a))).join(' or ')}</b> signs off too.`}</span></div>` : '';
+  const sugg = isCur ? p.suggestions.slice(0, 3) : [];
+  const act = (attrs, label, primary) => (canAct ? `<button class="btn sm ${primary ? 'primary' : ''}" ${attrs}>${label}</button>` : '');
+  const best = sugg.length ? Math.max(...sugg.map((x) => x.saving[1])) : 0;
+  const saveHtml = sugg.length ? `<div class="save"><div class="save-h">${icon('spark', 's')}<span>Lake can trim up to <b class="num">${money(best)}</b></span></div>${sugg.map((x) => `<div class="sg"><div class="grow"><b>${esc(x.title)}</b><span class="num">−${money(x.saving[1])}</span></div>${act(`data-act="${author ? 'apply' : 'suggest'}" data-sid="${esc(x.id)}"`, author ? 'Apply' : 'Suggest', author)}</div>`).join('')}</div>` : '';
+  const curKey = est.model ? est.model.key : est.declared ? null : 'lake-mix';
+  const opts = isCur && p.modelOptions ? `<details class="models"${S.modelsOpen ? ' open' : ''}><summary data-act="models-toggle">${icon('cpu', 's')}Compare models${icon('chevd', 'xs')}</summary>${p.modelOptions.map((o) => `<div class="mo ${o.fit} ${o.key === curKey ? 'cur' : ''}"><div class="grow"><span class="nm">${esc(short(o.name))}${o.recommended ? '<i>Lake pick</i>' : ''}${o.key === curKey ? '<i class="c">in plan</i>' : ''}</span><span class="nt">${esc(o.note)}</span></div><span class="num pr">${range(o.usd)}</span>${o.key !== curKey && o.key !== 'lake-mix' ? act(`data-act="${author ? 'use-model' : 'suggest-model'}" data-m="${esc(o.key)}"`, author ? 'Use' : 'Suggest') : ''}</div>`).join('')}</details>` : '';
+  return `<section class="card cost" aria-label="Model and cost"><h4>${icon('coin', 's')}Model &amp; cost<span class="r">${esc(est.complexity)} complexity</span></h4>
+    <div class="est-total num">${range(planned)}</div><div class="est-sub">${est.model ? `on <b>${esc(short(est.model.name))}</b>` : est.declared ? 'models set per step' : 'Lake pick per step · no model set in the plan'}${est.cap != null ? ` · capped at ${money(est.cap)}` : ''}</div>
+    ${budget}
+    ${est.steps.map((s) => { const u = s.planned ? s.planned.usd : s.usd; const m = s.planned ? s.planned.name : s.model; return `<div class="step"><span class="sn">${s.n}</span><span class="st" title="${esc(s.title)}">${esc(s.title)}</span><span class="mchip ${s.complexity} ${s.fit}" title="${s.fit === 'risky' ? 'May be too weak for this step' : s.fit === 'overkill' ? `More than this step needs. Lake pick: ${esc(s.model)}` : esc(s.complexity) + ' complexity'}">${s.fit === 'risky' ? '! ' : ''}${esc(short(m))}</span><span class="bar"><i class="${s.complexity}" style="width:${Math.max(6, (u[1] / max) * 100)}%"></i></span></div>`; }).join('')}
+    ${saveHtml}${opts}
+    ${(est.modelNotes || []).map((x) => `<p class="fine" style="color:var(--warn)">${esc(x)}</p>`).join('')}
+    <p class="fine">Forecast from the plan text and list prices (${esc(est.pricesAsOf)}). Not a quote.</p></section>`;
 }
 function threadsCard(p) {
   const tf = S.tfilter;
@@ -339,6 +374,7 @@ function banner(p, n) {
   const msg = st === 'approved' ? `<b>Approved</b> by ${names(p.policy.approvers)} for v${p.short}. The agent can build this exact version.`
     : st === 'auto-approved' ? '<b>Auto-approved</b> by the team policy (small and cheap).'
       : st === 'changes-requested' ? `<b>Changes requested</b> by ${names(p.policy.blockers)}. The agent waits for a new round.`
+        : st === 'needs-budget' ? `<b>Reviewers approved.</b> Up to ${money(p.budget.exposure)} is over the team's ${money(p.budget.threshold)} line, so ${p.budget.approvers.map((a) => esc(first(a))).join(' or ')} signs off too.`
         : st === 'draft' ? `<b>Draft.</b> ${p.local ? `Only in your checkout${p.local.unpushed ? ', edited since the PR version' : ''}. Push it and open a PR to ask for review.` : 'Mark the PR ready for review when the plan is.'}`
           : `<b>Waiting for ${p.policy.needed} more approval${p.policy.needed > 1 ? 's' : ''}.</b> ${p.policy.approvers.length ? `${names(p.policy.approvers)} approved this version.` : 'No approvals on this version yet.'}`;
   return `<div class="banner st-${st}"><span class="ico">${icon(STATUS[st][1])}</span><span>${msg}</span><span class="who-row">${p.openThreads ? `${icon('msg', 's')}${p.openThreads} open thread${p.openThreads > 1 ? 's' : ''}` : `${icon('check', 's')}No open threads`}</span></div>`;
@@ -350,7 +386,7 @@ function actionsHtml(p, mobile) {
   if (me === p.author) return mobile ? '' : `<span class="youdid" style="background:#e9f1ef;color:var(--ink2)">${icon('file', 's')}You wrote this plan</span>`;
   if (p.pr.state !== 'open') return mobile ? '' : `<span class="youdid">${icon('check', 's')}PR ${esc(p.pr.state)}</span>`;
   if (myVerdict(p) === 'approved') return `<span class="youdid">${icon('check', 's')}You approved v${p.short}</span>`;
-  return `<button class="btn ${mobile ? '' : 'danger'}" data-act="changes">${icon('undo', 's')}Request changes${mobile ? '' : ' <span class="k">R</span>'}</button><button class="btn primary" data-act="approve">${icon('check', 's')}Approve${mobile ? '' : ` v${p.short} <span class="k">A</span>`}</button>`;
+  return `<button class="btn ${mobile ? '' : 'danger'}" data-act="changes">${icon('undo', 's')}Request changes${mobile ? '' : ' <span class="k">R</span>'}</button><button class="btn primary" data-act="approve">${icon(p.budget?.required && p.budget.approvers.includes(me) ? 'coin' : 'check', 's')}${p.budget?.required && p.budget.approvers.includes(me) && !p.budget.satisfied ? 'Approve with budget' : 'Approve'}${mobile ? '' : ` v${p.short} <span class="k">A</span>`}</button>`;
 }
 function planView() {
   const p = findPlan();
@@ -374,7 +410,7 @@ function planView() {
       <nav class="outline" aria-label="Sections"><span class="h">Sections</span>${sections}
         <div class="meta"><span>${icon('pr', 'xs')} ${p.pr ? `<a class="linkbtn" href="${esc(p.pr.url)}" target="_blank" rel="noopener">#${p.pr.number}</a> ${esc(p.pr.branch || '')}` : 'Not on a PR'}</span><span>Version <span class="mono">${p.rounds[n - 1].short}</span></span><span>Or comment: <code style="font-size:10.5px">${esc(p.approveLine)}</code></span></div></nav>
       ${docView(p, n)}
-      <aside class="side">${reviewCard(p)}${threadsCard(p)}${estimateCard(p.rounds[n - 1].estimate)}${howCard(p)}</aside></div>`;
+      <aside class="side">${reviewCard(p)}${costCard(p, n)}${threadsCard(p)}${howCard(p)}</aside></div>`;
   } else if (tab === 'rounds') body = roundsView(p);
   else if (tab === 'diff') body = diffView(p);
   else body = `<div class="feed">${feed(p.timeline)}</div>`;
@@ -395,20 +431,20 @@ function verdictLine(v) {
 }
 function roundsView(p) {
   const cards = p.rounds.map((r) => {
-    const delta = r.n > 1 ? r.estimate.usd[1] - p.rounds[r.n - 2].estimate.usd[1] : 0;
+    const delta = r.n > 1 ? costOf(r.estimate)[1] - costOf(p.rounds[r.n - 2].estimate)[1] : 0;
     const th = r.threads; const resolved = th.filter((t) => t.resolved).length;
     return `<div class="rcard"><div class="rnum ${r.current ? (isApproved(p) ? 'approved' : 'cur') : r.outcome}">${r.n}</div><div class="rbody">
       <div class="top"><b>Round ${r.n}</b><span class="chip line mono">v${r.short}</span>${chip(r.current ? p.status : r.outcome)}<span class="grow"></span>
         <a class="btn sm" href="${planHref(p)}${r.current ? '' : `?round=${r.n}`}">Read</a>${r.n > 1 ? `<a class="btn sm" href="${planHref(p, `/diff/${r.n - 1}/${r.n}`)}">${icon('diff', 's')}Changes</a>` : ''}</div>
       <div class="rmeta"><span class="who">${avatar(r.author || p.author, 'sm')}${esc(first(r.author || p.author))} ${r.n === 1 ? 'opened the plan' : 'revised it'}</span><span>${rel(r.at)}</span>
         ${r.stats ? `<span><span class="plus">+${r.stats.added}</span> <span class="minus">−${r.stats.removed}</span> lines</span>` : ''}
-        <span class="num">${range(r.estimate.usd)}${Math.abs(delta) > 0.005 ? ` <span class="${delta > 0 ? 'minus' : 'plus'}">(${delta > 0 ? '+' : '−'}${money(Math.abs(delta))})</span>` : ''}</span>
+        <span class="num">${range(costOf(r.estimate))}${r.estimate.model ? ` · ${esc(short(r.estimate.model.name))}` : ''}${Math.abs(delta) > 0.005 ? ` <span class="${delta > 0 ? 'minus' : 'plus'}">(${delta > 0 ? '+' : '−'}${money(Math.abs(delta))})</span>` : ''}</span>
         <span>${th.length} thread${th.length === 1 ? '' : 's'}${th.length ? `, ${resolved} resolved` : ''}</span></div>
       ${r.verdicts.map(verdictLine).join('')}
       ${!r.verdicts.length ? `<div class="rmeta" style="margin-top:10px">${r.current ? 'No verdicts on this round yet.' : 'Superseded before anyone gave a verdict.'}</div>` : ''}
     </div></div>`;
   }).join('');
-  return `<div class="rgrid"><div class="rtl">${cards}</div><aside class="side">${reviewCard(p)}${estimateCard(p.estimate)}</aside></div>`;
+  return `<div class="rgrid"><div class="rtl">${cards}</div><aside class="side">${reviewCard(p)}${costCard(p, p.round)}</aside></div>`;
 }
 function diffView(p) {
   if (p.round < 2) return '<div class="empty"><b>Only one round so far</b>Changes appear after the first revision.</div>';
@@ -437,15 +473,15 @@ function diffView(p) {
   });
   if (gap) html.push(gapRow(gap));
   const sel = (name, v) => `<select data-act="diffsel" data-which="${name}" aria-label="${name === 'a' ? 'From round' : 'To round'}">${p.rounds.map((r) => `<option value="${r.n}" ${r.n === v ? 'selected' : ''}>Round ${r.n} · v${r.short}</option>`).join('')}</select>`;
-  const delta = B.estimate.usd[1] - A.estimate.usd[1];
+  const delta = costOf(B.estimate)[1] - costOf(A.estimate)[1];
   const asks = A.verdicts.filter((v) => v.action === 'reject').map(verdictLine).join('');
   const athreads = A.threads.map((t) => `<div class="tl ${t.resolved ? 'res' : ''}">${avatar(t.comments[0]?.login, 'sm')}<span style="min-width:0"><span class="q" style="display:block">${esc(t.comments[0]?.text || '')}</span><span class="m">${t.resolved ? `Resolved by ${esc(first(t.resolvedBy))}` : 'Still open'}${t.outdated ? ' · text changed' : ''}</span></span></div>`).join('');
   return `<div class="rgrid"><section class="diff" aria-label="Changes"><div class="diff-head"><b>Changes</b>${sel('a', a)}${icon('arrow', 's')}${sel('b', b)}<span style="flex:1"></span><span class="plus">+${st.added}</span><span class="minus">−${st.removed}</span><button class="btn sm ghost" data-act="expand">${S.expand ? 'Collapse' : 'Show all'}</button></div>${html.join('')}</section>
     <aside class="side"><section class="card"><h4>${icon('undo', 's')}What round ${a} asked for</h4>${asks || '<p class="fine" style="margin:0">No change requests in that round.</p>'}
       ${athreads ? `<div style="margin-top:12px" class="tlist">${athreads}</div>` : ''}</section>
-      <section class="card"><h4>${icon('coin', 's')}Cost change</h4><div class="cdelta"><span class="num">${range(A.estimate.usd)}</span>${icon('arrow', 's')}<b class="num">${range(B.estimate.usd)}</b></div><p class="fine">${delta > 0.005 ? `Upper estimate up ${money(delta)}.` : delta < -0.005 ? `Upper estimate down ${money(-delta)}.` : 'About the same.'} ${B.estimate.steps.length} steps, ${esc(B.estimate.complexity)} complexity.</p></section></aside></div>`;
+      <section class="card"><h4>${icon('coin', 's')}Cost change</h4><div class="cdelta"><span class="num">${range(costOf(A.estimate))}</span>${icon('arrow', 's')}<b class="num">${range(costOf(B.estimate))}</b></div><p class="fine">${delta > 0.005 ? `Upper estimate up ${money(delta)}.` : delta < -0.005 ? `Upper estimate down ${money(-delta)}.` : 'About the same.'} ${B.estimate.steps.length} steps, ${esc(B.estimate.complexity)} complexity${B.estimate.model ? `, on ${esc(short(B.estimate.model.name))}` : ''}.</p></section></aside></div>`;
 }
-const FEED_ICON = { version: 'layers', comment: 'msg', reply: 'msg', resolve: 'check', reopen: 'undo', approve: 'check', reject: 'undo', revoke: 'x' };
+const FEED_ICON = { version: 'layers', comment: 'msg', reply: 'msg', resolve: 'check', reopen: 'undo', approve: 'check', reject: 'undo', revoke: 'x', accept: 'spark' };
 function feedText(t, all) {
   const w = `<b>${esc(person(t.login))}</b>`;
   const on = all && t.plan ? ` · <a class="linkbtn" href="${planHref(t.plan)}">${esc(t.plan.title)}</a>` : '';
@@ -459,6 +495,7 @@ function feedText(t, all) {
     case 'approve': return `${w} approved round ${t.n || '?'}${via}${t.self ? ' <span class="chip soft">author, does not count</span>' : ''}${on}`;
     case 'reject': return `${w} requested changes on round ${t.n || '?'}${via}${on}`;
     case 'revoke': return `${w} withdrew approval${on}`;
+    case 'accept': return `${w} accepted a suggestion${t.short ? ` → <span class="chip line mono">v${esc(t.short)}</span>` : ''}${on}`;
     default: return `${w} ${esc(t.kind)}${on}`;
   }
 }
@@ -472,7 +509,7 @@ function feed(items, all) {
   }
   const label = (k) => { const d = new Date(k); return d.toDateString() === new Date().toDateString() ? 'Today' : d.toDateString() === new Date(Date.now() - 864e5).toDateString() ? 'Yesterday' : d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }); };
   if (!groups.size) return '<div class="empty"><b>No activity yet</b></div>';
-  return [...groups].map(([k, list]) => `<div class="day">${label(k)}</div>${list.map((t) => `<div class="ev"><span class="dotc ${t.kind}">${t.kind === 'comment' || t.kind === 'reply' ? avatar(t.login, 'sm') : icon(FEED_ICON[t.kind] || 'dot', 's')}</span><div><div class="line1">${feedText(t, all)}</div>${t.text && ['comment', 'reply', 'approve', 'reject'].includes(t.kind) ? `<div class="txt">${inline(t.text)}</div>` : ''}</div><span class="tm">${new Date(t.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span></div>`).join('')}`).join('');
+  return [...groups].map(([k, list]) => `<div class="day">${label(k)}</div>${list.map((t) => `<div class="ev"><span class="dotc ${t.kind}">${t.kind === 'comment' || t.kind === 'reply' ? avatar(t.login, 'sm') : icon(FEED_ICON[t.kind] || 'dot', 's')}</span><div><div class="line1">${feedText(t, all)}</div>${t.text && ['comment', 'reply', 'approve', 'reject', 'accept'].includes(t.kind) ? `<div class="txt">${inline(t.text)}</div>` : ''}</div><span class="tm">${new Date(t.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span></div>`).join('')}`).join('');
 }
 function teamActivity() {
   const items = S.ws.plans.flatMap((p) => p.timeline.map((t) => ({ ...t, plan: p })));
@@ -493,7 +530,7 @@ function connectView() {
           <small>Fine-grained token for that repo with Pull requests read and write, Contents read. Kept only in this browser and sent only to api.github.com. <a class="linkbtn" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Create one ${icon('ext', 'xs')}</a></small></div>
         <label class="field" style="flex-direction:row;align-items:center;gap:8px;font-size:13px"><input type="checkbox" name="remember" style="width:auto;height:auto"> Remember on this device</label>
         ${q.err ? `<p class="err">${esc(q.err)}</p>` : ''}
-        <div style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap"><button class="btn primary" type="submit">${icon('gh', 's')}Open repository</button><a class="btn" href="#/demo">Try the live demo ${icon('arrow', 's')}</a>${has ? '<button class="btn ghost" type="button" data-act="signout">Forget token</button>' : ''}</div>
+        <div style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap"><a class="btn primary" href="#/demo">Try the live demo ${icon('arrow', 's')}</a><button class="btn" type="submit">${icon('gh', 's')}Open repository</button>${has ? '<button class="btn ghost" type="button" data-act="signout">Forget token</button>' : ''}</div>
       </form>
       <p class="fine" style="margin-top:18px">Prefer local? Run <code>npx lake-gate ui</code> in your repo. It uses your existing <code>gh</code> login and also shows plans you haven't pushed yet.</p>
     </section>
@@ -526,7 +563,7 @@ function sheetHtml() {
     <textarea id="stext" placeholder="${appr ? 'Optional note, e.g. “Looks right, ship it.”' : 'What needs to change? The author and their agent will see this.'}" aria-label="Note">${esc(sh.text || '')}</textarea>
     ${appr && mine.length ? `<label class="chk"><input type="checkbox" id="sres" ${sh.resolveMine ? 'checked' : ''}> Resolve my ${mine.length} open thread${mine.length > 1 ? 's' : ''}</label>` : ''}
     ${sh.err ? `<p class="err">${esc(sh.err)}</p>` : ''}
-    <div class="row"><span class="hint">Posts on ${p.pr ? `PR #${p.pr.number}` : 'the PR'} as you · <kbd>⌘</kbd> <kbd>↵</kbd></span><button class="btn ghost" data-act="close">Cancel</button>
+    <div class="row"><span class="hint">Posts to ${p.pr ? `PR #${p.pr.number}` : 'the PR'} · <kbd>⌘↵</kbd></span><button class="btn ghost" data-act="close">Cancel</button>
       <button class="btn ${appr ? 'primary' : 'danger'}" data-act="sheet-submit" ${sh.state === 'posting' ? 'disabled' : ''}>${sh.state === 'posting' ? 'Posting…' : appr ? `${icon('check', 's')}Approve v${p.short}` : `${icon('undo', 's')}Request changes`}</button></div>
   </div></div>`;
 }
@@ -560,6 +597,29 @@ async function render() {
   if (S.focus) document.getElementById(`t-${S.focus}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 const rerender = () => render();
+
+// ---------- small delights ----------
+const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+function celebrate(saved) {
+  if (calm() || !(saved > 0.005)) return;
+  const el = document.createElement('div'); el.className = 'drops'; el.setAttribute('aria-hidden', 'true');
+  el.innerHTML = Array.from({ length: 7 }, (_, i) => `<i style="left:${12 + i * 12}%;animation-delay:${i * 60}ms"></i>`).join('') + `<b class="num">−${money(saved)}</b>`;
+  document.body.appendChild(el); setTimeout(() => el.remove(), 1800);
+}
+function sailBoat() {
+  if (document.querySelector('.boat')) return;
+  const el = document.createElement('div'); el.className = 'boat'; el.setAttribute('aria-hidden', 'true');
+  el.innerHTML = '<svg viewBox="0 0 64 40"><path d="M30 4v24M30 6l16 20H30z" fill="#fff" stroke="#0e7c7b" stroke-width="2" stroke-linejoin="round"/><path d="M30 10L18 26h12z" fill="#a7dbd3" stroke="#0e7c7b" stroke-width="2" stroke-linejoin="round"/><path d="M8 30h48l-6 7H14z" fill="#0e7c7b"/></svg><span></span>';
+  document.body.appendChild(el); toast('Smooth sailing. Every plan floats better with a review.', 'spark');
+  setTimeout(() => el.remove(), calm() ? 2500 : 9000);
+}
+// Type "calm" anywhere outside a field: the page settles like still water.
+let typed = '';
+document.addEventListener('keydown', (e) => {
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || e.key.length !== 1) return;
+  typed = (typed + e.key.toLowerCase()).slice(-4);
+  if (typed === 'calm') { typed = ''; document.body.classList.remove('stillwater'); void document.body.offsetWidth; document.body.classList.add('stillwater'); toast('Still water. Nothing ships without a yes.', 'spark'); setTimeout(() => document.body.classList.remove('stillwater'), 2600); }
+});
 
 async function post(p, kind, o) {
   try {
@@ -637,6 +697,36 @@ document.addEventListener('click', async (e) => {
     case 'jump': e.preventDefault(); document.querySelector(`#doc [data-s="${el.dataset.s}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return;
     case 'expand': S.expand = !S.expand; return rerender();
     case 'sheet-submit': return submitSheet();
+    case 'models-toggle': S.modelsOpen = !el.parentElement.open; return;
+    case 'apply': case 'suggest': case 'use-model': case 'suggest-model': {
+      const sg = act === 'apply' || act === 'suggest' ? p.suggestions.find((x) => x.id === el.dataset.sid) : { title: `Run the plan on ${p.modelOptions.find((o) => o.key === el.dataset.m)?.name || el.dataset.m}`, patch: { type: 'planModel', model: p.modelOptions.find((o) => o.key === el.dataset.m)?.name || el.dataset.m }, saving: null };
+      if (!sg) return;
+      el.disabled = true;
+      const before = p.estimate.declared ? p.estimate.plannedUsd[1] : p.estimate.usd[1];
+      try {
+        if (act === 'apply' || act === 'use-model') {
+          await post(p, 'accept', { title: sg.title, patch: sg.patch, thread: `self-${Date.now().toString(36)}` });
+          const np = findPlan(); const after = np.estimate.declared ? np.estimate.plannedUsd[1] : np.estimate.usd[1];
+          celebrate(before - after);
+          toast(`Round ${np.round} is up · v${np.short}${before - after > 0.005 ? ` · ${money(before - after)} lighter` : ''}`, 'spark');
+        } else {
+          await post(p, 'suggest', { version: p.digest, title: sg.title, patch: sg.patch, saving: sg.saving });
+          toast(`Suggested to ${esc(first(p.author))}. One click for them to accept.`, 'spark');
+        }
+      } catch { el.disabled = false; }
+      return rerender();
+    }
+    case 'accept': {
+      const t = p.threads.find((x) => x.id === el.dataset.t); if (!t?.suggestion) return;
+      el.disabled = true; const before = p.estimate.declared ? p.estimate.plannedUsd[1] : p.estimate.usd[1];
+      try {
+        await post(p, 'accept', { thread: t.id, title: t.suggestion.title, patch: t.suggestion.patch });
+        const np = findPlan(); const after = np.estimate.declared ? np.estimate.plannedUsd[1] : np.estimate.usd[1];
+        celebrate(before - after); toast(`Accepted · round ${np.round} is up for review`, 'spark');
+      } catch { el.disabled = false; }
+      return rerender();
+    }
+    case 'boat': { S.boat = (S.boat || 0) + 1; if (S.boat >= 5) { S.boat = 0; sailBoat(); } return; }
     case 'sel-comment': { const c = S.pendingSel; document.querySelector('.selbtn')?.remove(); if (c) { S.compose = c; S.focus = null; window.getSelection()?.removeAllRanges(); rerender(); } return; }
     default:
   }

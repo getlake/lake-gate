@@ -8,9 +8,10 @@ import { loadWorkspace, loadPr, actions, viewer as whoami } from './core/workspa
 import { buildPlanReview, versionsFromSnapshots } from './core/review.js';
 import { parseConfig } from './core/config-core.js';
 import { demoWorkspace, demoPost, demoReset, VIEWER, PEOPLE } from './demo.js';
-import { commentBody, replyBody, resolveBody, verdictBody } from './core/review.js';
+import { commentBody, replyBody, resolveBody, verdictBody, suggestionBody, acceptBody } from './core/review.js';
+import { demoAccept } from './demo.js';
 
-const BODY = { comment: commentBody, reply: replyBody, resolve: resolveBody, verdict: verdictBody };
+const BODY = { comment: commentBody, reply: replyBody, resolve: resolveBody, verdict: verdictBody, suggest: suggestionBody, accept: acceptBody };
 const TOKEN_KEY = 'lake.gh.token';
 
 export const tokenStore = {
@@ -24,6 +25,7 @@ export function demoSource() {
     mode: 'demo', repo: 'fernwood/payments-api', canWrite: true, viewer: VIEWER, people: PEOPLE,
     async load() { return demoWorkspace(); },
     async post(plan, kind, o) {
+      if (kind === 'accept') o = { ...o, newVersion: demoAccept(plan.pr.number, o.patch) };
       const body = BODY[kind]({ ...o, via: 'Lake review' });
       demoPost(plan.pr.number, body);
       return { body, where: `PR #${plan.pr.number}` };
@@ -46,7 +48,7 @@ function ghSource({ repo, gh, mode, extraPlans }) {
     async post(plan, kind, o) {
       if (!plan.pr) throw new Error('This plan is not on a pull request yet. Push it and open a PR first.');
       await actions[kind](gh, plan.pr.number, { ...o, via: 'Lake review' });
-      return { body: BODY[kind]({ ...o, via: 'Lake review' }), where: `PR #${plan.pr.number}` };
+      return { body: kind === 'accept' ? `Committed the change to ${plan.path} on ${plan.pr.branch}` : BODY[kind]({ ...o, via: 'Lake review' }), where: `PR #${plan.pr.number}` };
     },
     async reloadPr(number) { return loadPr(gh, number); },
   };

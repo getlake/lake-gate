@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#0e7c7b">
 <title>lake-gate · Your coding agent waits for a real yes</title>
-<meta name="description" content="Free, open-source plan approval for AI-coding teams. The agent's plan goes into your repo with a cost estimate per step, and implementation waits until a teammate approves that exact version.">
+<meta name="description" content="Plan review for Claude Code &amp; Cursor teams. Your agent's plan goes into the repo, and the build waits until a teammate approves that exact version. MIT, no Lake server, no account.">
 <meta property="og:title" content="lake-gate · Your coding agent waits for a real yes">
-<meta property="og:description" content="Version-bound team plan approval for Claude Code, Cursor and Codex. A Claude Code hook plus a GitHub Action. No backend, no telemetry.">
+<meta property="og:description" content="Your coding agent waits for a real yes. Works in Claude Code and Cursor. Review in the browser or on GitHub. MIT, no Lake server, no account.">
 <meta property="og:type" content="website">
 <link rel="icon" href="assets/logo-mark.svg">
 <link rel="preload" href="assets/inter.woff2" as="font" type="font/woff2" crossorigin>
@@ -33,6 +33,7 @@
     <a href="#how">How it works</a>
     <a href="#estimate">Estimates</a>
     <a href="#honest">Limits</a>
+    <a href="#partners">Teams</a>
     <a href="app/#/demo" data-track="nav-demo">Live demo</a>
     <a class="button compact ghost" href="https://github.com/getlake/lake-gate" data-track="nav-github"><svg><use href="#github"/></svg> GitHub</a>
   </nav>
@@ -43,49 +44,73 @@
   <img class="landscape" src="assets/lake-editorial-scene.svg" alt="" fetchpriority="high">
   <div class="container hero-grid">
     <div class="hero-copy">
-      <p class="eyebrow"><span class="small-line"></span> FREE · OPEN SOURCE · FOR AI-CODING TEAMS</p>
+      <p class="eyebrow"><span class="small-line"></span> FOR CLAUDE CODE &amp; CURSOR TEAMS</p>
       <h1 id="hero-title">Your agent waits for a <em>real yes.</em></h1>
-      <p class="lede">lake-gate saves your coding agent's plan in the repo, prices each step, and holds implementation until a teammate approves <strong>that exact version</strong>. Edit the plan and the yes expires.</p>
+      <p class="lede">lake-gate puts your agent's plan in the repo, prices each step, and holds the build until a teammate approves <strong>that exact version</strong>. Edit the plan and the approval expires.</p>
       <div class="install" role="group" aria-label="Install command">
         <code><span class="prompt">$</span> npx lake-gate init</code>
         <button class="copy" type="button" data-copy="npx lake-gate init" aria-label="Copy install command"><svg><use href="#copy"/></svg><span>Copy</span></button>
       </div>
       <div class="hero-ctas">
-        <a class="button" href="https://github.com/getlake/lake-gate" data-track="hero-github">Read the README <svg><use href="#arrow"/></svg></a>
-        <a class="text-link" href="#partners">Become a design partner <svg><use href="#up"/></svg></a>
+        <a class="button" href="app/#/demo" data-track="hero-demo">Try the live demo <svg><use href="#arrow"/></svg></a>
+        <a class="text-link" href="https://github.com/getlake/lake-gate" data-track="hero-github">Read the README <svg><use href="#up"/></svg></a>
       </div>
-      <p class="microcopy">A Claude Code hook and a GitHub Action. MIT licensed. No Lake server, no account, no telemetry.</p>
+      <p class="microcopy">Works in Claude Code and Cursor. Review in the browser or on GitHub. MIT, no Lake server, no account.</p>
     </div>
 
-    <div class="hero-visual" aria-label="Example: the gate blocks an edit, a teammate approves the exact version on the PR">
-      <div class="term">
-        <div class="term-bar"><i></i><i></i><i></i><span>claude · webhooks-retry</span></div>
-        <pre><span class="dim">● Write(src/webhooks/queue.ts)</span>
-<span class="deny">  ⎿ Blocked by lake-gate</span>
-<span class="dim">    plan</span> add-webhook-retries <span class="dim">version</span> <b>86eab4d0</b>
-<span class="dim">    is not approved yet. A teammate comments:</span>
-<span class="cmd">    /lake approve add-webhook-retries@86eab4d0</span></pre>
+    <div class="live" id="live" aria-label="A plan arrives, Lake prices each step, a reviewer comments, a cheaper model is suggested, and one click approves it">
+      <div class="live-win">
+        <div class="lw-bar"><span class="lw-dots"><i></i><i></i><i></i></span><span class="lw-url">getlake.github.io/lake-gate/app</span></div>
+        <div class="lw-body">
+          <div class="lw-head">
+            <div><div class="lw-crumb">Plans · PR #412</div><h3>Add webhook retries</h3></div>
+            <span class="lw-chip" id="lv-chip"><i></i><span>In review</span></span>
+          </div>
+          <div class="lw-model"><span class="lw-runs">Runs on</span><b id="lv-model">Opus 5.5</b><span class="lw-total"><span class="lw-tl">est. cost</span><span class="lw-meter"><i id="lv-meter"></i></span><b class="lw-cut" id="lv-cut">−12%</b></span></div>
+          <ol class="lw-steps">
+            <li data-s="1"><span class="n">1</span><span class="t">Bounded retry queue with backoff</span><span class="m" data-a="Opus 5.5" data-b="Sonnet 5.5">Opus 5.5</span><span class="c" style="--a:39%;--b:29%"><i></i></span></li>
+            <li data-s="2"><span class="n">2</span><span class="t">Idempotent retries + migration</span><span class="m hi" data-a="Opus 5.5" data-b="Opus 5.5">Opus 5.5</span><span class="c" style="--a:100%;--b:100%"><i></i></span>
+              <div class="lw-comment"><span class="av">N</span><div><b>Noah</b> <span>Reuse the idempotency key so a retry never charges twice.</span></div></div></li>
+            <li data-s="3"><span class="n">3</span><span class="t">Fix typo in README</span><span class="m" data-a="Opus 5.5" data-b="Haiku 5.5">Opus 5.5</span><span class="c" style="--a:15%;--b:4%"><i></i></span></li>
+            <li data-s="4"><span class="n">4</span><span class="t">Replay and failure tests</span><span class="m" data-a="Opus 5.5" data-b="Haiku 5.5">Opus 5.5</span><span class="c" style="--a:24%;--b:5%"><i></i></span></li>
+          </ol>
+          <div class="lw-sugg"><span class="sp">✦</span><div><b>Cheaper models for 3 simpler steps</b><span>Lake suggestion · same plan, about 12% less</span></div><span class="lw-apply">Accept</span></div>
+          <div class="lw-foot">
+            <span class="lw-check" id="lv-check"><i></i><span>lake/plan-approval · waiting for a teammate</span></span>
+            <span class="lw-approve" id="lv-approve">Approve v8f2c41d0</span>
+          </div>
+        </div>
+        <span class="lw-cursor" aria-hidden="true"></span>
       </div>
-      <article class="pr-card">
-        <header><img src="assets/logo-mark.svg" alt="" width="20" height="20"><b>Lake plan gate</b><span class="pill">bot</span></header>
-        <table>
-          <thead><tr><th>Step</th><th>Model</th><th>Est.</th></tr></thead>
-          <tbody>
-            <tr><td>Bounded retry queue</td><td><span class="tier m">Sonnet</span></td><td>$0.42–1.25</td></tr>
-            <tr class="flag"><td>Migration: retry_count</td><td><span class="tier h">Opus</span></td><td>$2.04–7.09</td></tr>
-            <tr><td>Fix typo in README</td><td><span class="tier l">Haiku</span></td><td>$0.03–0.11</td></tr>
-          </tbody>
-        </table>
-        <div class="comment"><span class="avatar">N</span><p><b>noah</b> <span class="dim">approved v86eab4d0</span><br><code>/lake approve add-webhook-retries@86eab4d0</code></p></div>
-        <div class="status ok"><svg><use href="#check"/></svg><span><b>lake/plan-approval</b> 1 plan approved for its current version</span></div>
-      </article>
-      <p class="visual-note">Illustrative output. The estimates are heuristic ranges, not quotes.</p>
+      <div class="live-term"><span class="d">●</span> Write(src/webhooks/queue.ts) <b id="lv-term">blocked by lake-gate</b></div>
+      <p class="visual-note">Live product moment from the <a href="app/#/demo">demo</a>. Estimates come from the shared Lake estimator.</p>
     </div>
   </div>
 </section>
 
+
+
+
+
+
+
+
+
+<section class="how" id="how" aria-labelledby="how-title">
+  <div class="container">
+    <p class="section-index">01 · HOW IT WORKS</p>
+    <h2 id="how-title">Four steps, all inside tools you already use.</h2>
+    <ol class="steps">
+      <li><span class="n">01</span><svg><use href="#file"/></svg><h3>Plan lands in the repo</h3><p>When Claude Code leaves plan mode, a hook writes <code>.lake/plans/&lt;id&gt;.md</code> with a version hash. In Cursor (or any other agent): <code>npx lake-gate plan plan.md</code>.</p></li>
+      <li><span class="n">02</span><svg><use href="#lock"/></svg><h3>Planned work waits</h3><p>Once there's a plan, a hook holds edits until it's approved. The agent can still read, search and explain. Tiny plans pass on their own, and unplanned quick fixes aren't blocked.</p></li>
+      <li><span class="n">03</span><svg><use href="#review"/></svg><h3>A teammate says yes</h3><p>Approve in the <a href="app/#/demo">Lake review app</a> or with GitHub's own Approve button. Comments land on exact lines, round by round. The author and bots don't count.</p></li>
+      <li><span class="n">04</span><svg><use href="#branch"/></svg><h3>The check holds the line</h3><p>The Action sets <code>lake/plan-approval</code> on the PR. Edit the plan and it turns red until someone approves the new version.</p></li>
+    </ol>
+  </div>
+</section>
+
 <section class="problem container" aria-labelledby="problem-title">
-  <p class="section-index">01 · WHY</p>
+  <p class="section-index">02 · WHY</p>
   <div class="split">
     <h2 id="problem-title">Plan mode is solo.<br><span class="quiet">Shipping is a team sport.</span></h2>
     <div class="patterns">
@@ -97,43 +122,10 @@
   <p class="honesty">These are patterns we keep seeing in public threads and conversations with developers. They're not survey numbers.</p>
 </section>
 
-<section class="how" id="how" aria-labelledby="how-title">
-  <div class="container">
-    <p class="section-index">02 · HOW IT WORKS</p>
-    <h2 id="how-title">Four steps, all inside tools you already use.</h2>
-    <ol class="steps">
-      <li><span class="n">01</span><svg><use href="#file"/></svg><h3>Plan lands in the repo</h3><p>When Claude Code leaves plan mode, a hook writes <code>.lake/plans/&lt;id&gt;.md</code> with a version hash. Cursor or Codex: <code>npx lake-gate plan plan.md</code>.</p></li>
-      <li><span class="n">02</span><svg><use href="#lock"/></svg><h3>Implementation waits</h3><p>A <code>PreToolUse</code> hook denies edits and non-read-only shell commands. The agent can still read, search and explain.</p></li>
-      <li><span class="n">03</span><svg><use href="#review"/></svg><h3>A teammate says yes</h3><p>One click in the <a href="app/#/demo">Lake review app</a>, GitHub's own Approve button, or from the agent chat. Comments land on exact lines, round by round. The author and bots don't count, and neither do read-only users.</p></li>
-      <li><span class="n">04</span><svg><use href="#branch"/></svg><h3>The check holds the line</h3><p>The Action sets <code>lake/plan-approval</code> on the PR. Edit the plan and it turns red until someone approves the new version.</p></li>
-    </ol>
-  </div>
-</section>
-
-<section class="estimate container" id="estimate" aria-labelledby="est-title">
-  <div class="split">
-    <div>
-      <p class="section-index">03 · ESTIMATES</p>
-      <h2 id="est-title">The right model for each step, <span class="quiet">not one for everything.</span></h2>
-      <p class="body">Every plan gets a complexity rating and a recommended model per step, with a cost range. Reviewers see what they're paying for before they say yes. Small, cheap plans can skip review with an auto-approve threshold, which starts in shadow mode.</p>
-      <p class="honesty">Ranges come from keyword heuristics and public list prices, and you can edit both in <code>.lake/config.json</code>. It's a forecast, not a cap. On a subscription you spend quota, not dollars.</p>
-    </div>
-    <div class="est-card" role="table" aria-label="Example estimate">
-      <div class="est-head" role="row"><span role="columnheader">Step</span><span role="columnheader">Complexity</span><span role="columnheader">Model</span><span role="columnheader">Est.</span></div>
-      <div class="est-row" role="row"><span role="cell">Retry queue with backoff</span><span role="cell"><i class="dotc m"></i>medium</span><span role="cell">Sonnet 5.5</span><span role="cell">$0.42–1.25</span></div>
-      <div class="est-row" role="row"><span role="cell">Migration + idempotency</span><span role="cell"><i class="dotc h"></i>high</span><span role="cell">Opus 5.5</span><span role="cell">$2.04–7.09</span></div>
-      <div class="est-row" role="row"><span role="cell">Fix typo in README</span><span role="cell"><i class="dotc l"></i>low</span><span role="cell">Haiku 5.5</span><span role="cell">$0.03–0.11</span></div>
-      <div class="est-row" role="row"><span role="cell">Replay + failure tests</span><span role="cell"><i class="dotc m"></i>medium</span><span role="cell">Sonnet 5.5</span><span role="cell">$0.42–1.25</span></div>
-      <div class="est-total"><span>Routed per step</span><b>$2.91–9.71</b><span class="dim">All on Opus: $3.95–13</span></div>
-      <div class="auto"><span class="shadow-label">SHADOW</span> Auto-approve needs a human: above $1.50, 4 steps, high complexity.</div>
-    </div>
-  </div>
-</section>
-
 <section class="honest" id="honest" aria-labelledby="honest-title">
   <div class="container split">
     <div>
-      <p class="section-index">04 · LIMITS</p>
+      <p class="section-index">03 · LIMITS</p>
       <h2 id="honest-title">What it is, <span class="quiet">and what it isn't.</span></h2>
     </div>
     <ul class="limits">
@@ -145,17 +137,35 @@
   </div>
 </section>
 
+<section class="estimate container" id="estimate" aria-labelledby="est-title">
+  <div class="split">
+    <div>
+      <p class="section-index">04 · MODELS &amp; COST</p>
+      <h2 id="est-title">The right model for each step, <span class="quiet">not one for everything.</span></h2>
+      <p class="body">Every plan gets a complexity rating and a recommended model per step, so reviewers can see where the heavy work is before they say yes. Small, low-complexity plans can skip review.</p>
+      <p class="honesty">Ranges come from keyword heuristics, and you can tune them in <code>.lake/config.json</code>.</p>
+    </div>
+    <div class="est-card" role="table" aria-label="Example: model per step">
+      <div class="est-head" role="row"><span role="columnheader">Step</span><span role="columnheader">Complexity</span><span role="columnheader">Model</span></div>
+      <div class="est-row" role="row"><span role="cell">Retry queue with backoff</span><span role="cell"><i class="dotc m"></i>medium</span><span role="cell">Sonnet 5.5</span></div>
+      <div class="est-row" role="row"><span role="cell">Migration + idempotency</span><span role="cell"><i class="dotc h"></i>high</span><span role="cell">Opus 5.5</span></div>
+      <div class="est-row" role="row"><span role="cell">Fix typo in README</span><span role="cell"><i class="dotc l"></i>low</span><span role="cell">Haiku 5.5</span></div>
+      <div class="est-row" role="row"><span role="cell">Replay + failure tests</span><span role="cell"><i class="dotc l"></i>low</span><span role="cell">Haiku 5.5</span></div>
+      <div class="auto"><span class="shadow-label">AUTO-APPROVE</span> Small plans can skip review. This one needs a human: 4 steps, high complexity.</div>
+  </div>
+</section>
+
 <section class="partners container" id="partners" aria-labelledby="partners-title">
   <div class="partner-card">
     <img class="ripple" src="assets/ripple-mascot.svg" alt="" width="64" height="64">
-    <p class="section-index">05 · DESIGN PARTNERS</p>
-    <h2 id="partners-title">Running agents in a team of 2–10?</h2>
-    <p>We're looking for a few teams to try lake-gate on real work and tell us where it gets in the way. Free, and no sales call needed.</p>
+    <p class="section-index">05 · TEAMS</p>
+    <h2 id="partners-title">Running coding agents on a team of 5–15?</h2>
+    <p>We're taking a few early-access teams to run lake-gate on real work and shape the team version with us. Free, no sales call.</p>
     <div class="partner-ctas">
-      <a class="button" id="partner-cta" data-track="cta-design-partner" href="mailto:lake.research1@gmail.com?subject=lake-gate%20design%20partner&amp;body=Team%20size%3A%0AAgents%20we%20use%20(Claude%20Code%20%2F%20Cursor%20%2F%20Codex)%3A%0AWhat%20hurts%20most%20today%3A%0A">Join the design-partner list <svg><use href="#arrow"/></svg></a>
-      <a class="text-link" href="https://github.com/getlake/lake-gate/issues" data-track="cta-issues">Or open an issue <svg><use href="#up"/></svg></a>
+      <a class="button" id="partner-cta" data-track="cta-team-pilot" href="https://github.com/getlake/lake-gate/issues/new?labels=team-pilot&amp;title=Team%20pilot%20request&amp;body=Team%20size%3A%0AAgents%20we%20use%20(Claude%20Code%20%2F%20Cursor%20%2F%20other)%3A%0AWhat%20hurts%20most%20today%3A%0A" target="_blank" rel="noopener">Request a team pilot <svg><use href="#arrow"/></svg></a>
+      <a class="text-link" href="app/#/demo" data-track="cta-demo-bottom">Try the live demo first <svg><use href="#up"/></svg></a>
     </div>
-    <p class="microcopy">This opens an email to the Lake research team. We only use your address to reply to you.</p>
+    <p class="microcopy">Opens a short GitHub issue on getlake/lake-gate. It's public, so share only what you're happy to share.</p>
   </div>
 </section>
 </main>
@@ -165,6 +175,7 @@
   <span>lake-gate is MIT licensed.</span>
   <span class="grow"></span>
   <span>Cookieless visit counts, no personal data.</span>
+  <a href="https://getlake.github.io/lake-meter/">lake-meter: a model for every step, a stop for every run</a>
   <a href="https://github.com/getlake/lake-gate">GitHub</a>
 </footer>
 </body>

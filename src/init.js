@@ -27,7 +27,7 @@ export function mergeMcpConfig(cfg) {
   return { config: c, changed: true };
 }
 
-export function init(root, { actionRef = ACTION_REF, force = false } = {}) {
+export function init(root, { actionRef = ACTION_REF, force = false, trial = false } = {}) {
   const done = [];
   const write = (rel, content, overwrite = force) => {
     const p = path.join(root, rel);
@@ -36,8 +36,9 @@ export function init(root, { actionRef = ACTION_REF, force = false } = {}) {
     fs.writeFileSync(p, content);
     done.push(`wrote  ${rel}`);
   };
-  const { models, tokens, tierFor, ...short } = DEFAULT_CONFIG;
-  write('.lake/config.json', JSON.stringify({ ...short, models }, null, 2) + '\n');
+  // Short config: sensible defaults live in the code; only what a team usually changes is written.
+  const d = DEFAULT_CONFIG;
+  write('.lake/config.json', JSON.stringify({ requiredApprovals: d.requiredApprovals, autoApprove: d.autoApprove, budget: { approverAbove: null, approvers: [] }, ...(trial ? { try: true } : {}) }, null, 2) + '\n');
   write('.lake/plans/README.md', fs.readFileSync(path.join(TEMPLATES, 'plans-README.md'), 'utf8'));
   write('.github/workflows/lake-gate.yml', fs.readFileSync(path.join(TEMPLATES, 'lake-gate.yml'), 'utf8').replace('__ACTION_REF__', actionRef));
 

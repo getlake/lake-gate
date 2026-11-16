@@ -5,6 +5,7 @@
 // (Approve / Request changes) are mapped into the same model.
 import { readPlanText, splitFrontmatter, stripEstimate } from './plan.js';
 import { estimatePlan } from './estimate.js';
+import { costSuggestions, modelOptions } from './models.js';
 import { evaluatePlan, parseCommands } from './policy.js';
 
 const MARK = /<!--\s*lake:(c|resolve|v|proxy)\s+(\{[\s\S]*?\})\s*-->/g;
@@ -28,7 +29,7 @@ const CMD_LINE = /^\s*\/lake\s+(approve|reject|revoke)\b.*$/gim;
 export function messageOf(body) {
   return String(body || '').replace(MARK, '').replace(CMD_LINE, '')
     .replace(/^<sub>.*lake-gate.*<\/sub>$/gim, '')
-    .replace(/^\*\*(Comment on|Reply on|Resolved|Reopened) [^\n]*\*\*$/gim, '')
+    .replace(/^\*\*(Comment on|Reply on|Resolved|Reopened|Suggestion on|Accepted suggestion) [^\n]*\*\*.*$/gim, '')
     .replace(/^>.*$/gm, '').trim();
 }
 
@@ -48,6 +49,18 @@ export function commentBody({ planId, version, anchor, text, thread = newId(), v
   return [`**Comment on \`${planId}\` v${shortOf(version)}${where}**`, anchor?.quote ? quoteBlock(anchor.quote) : null, '', String(text).trim(), '', footer(via),
     encodeMarker('c', { p: planId, v: shortOf(version), t: thread, ...(anchor ? { a: { s: anchor.start, e: anchor.end || anchor.start, q: String(anchor.quote || '').slice(0, 300), h: anchor.heading || undefined } } : {}) })]
     .filter((x) => x !== null).join('\n');
+}
+// A structured suggestion (model change, cheaper steps, cap, drop a step). The author applies it in one click,
+// which commits a new plan version; the thread then shows as accepted.
+export function suggestionBody({ planId, version, title, patch, saving, text, thread = newId(), via, anchor }) {
+  const save = saving && saving[1] > 0.005 ? ` · saves up to $${saving[1] < 10 ? saving[1].toFixed(2) : Math.round(saving[1])}` : '';
+  return [`**Suggestion on \`${planId}\` v${shortOf(version)}: ${String(title).replace(/\*/g, '')}**${save}`, '', text ? String(text).trim() : null, text ? '' : null, footer(via),
+    encodeMarker('c', { p: planId, v: shortOf(version), t: thread, s: { title: String(title).slice(0, 140), patch, save: saving || null }, ...(anchor ? { a: { s: anchor.start, e: anchor.end || anchor.start, q: String(anchor.quote || '').slice(0, 300) } } : {}) })]
+    .filter((x) => x !== null).join('\n');
+}
+export function acceptBody({ planId, thread, title, newVersion, via }) {
+  return [`**Accepted suggestion on \`${planId}\`: ${String(title || '').replace(/\*/g, '')}** → v${shortOf(newVersion)}`, '', 'This is a new plan version, so earlier approvals no longer apply.', '', footer(via),
+    encodeMarker('resolve', { p: planId, t: thread, r: true, acc: 1, nv: shortOf(newVersion) })].join('\n');
 }
 export function replyBody({ planId, thread, text, via }) {
   return [`**Reply on \`${planId}\`**`, '', String(text).trim(), '', footer(via), encodeMarker('c', { p: planId, t: thread, re: 1 })].join('\n');
@@ -180,7 +193,7 @@ function headingFor(body, line) {
 // ---- The model ----
 // plan: current plan ({id, title, body, digest, short, meta}); versions: chronological [{digest, body, at, sha, author, offset}]
 // events: normalized events (comments, reviews, line comments); digestAt: {commitSha: digest} for this plan's file
-export function buildPlanReview({ plan, versions = [], events = [], prAuthor = null, config, digestAt = {}, pr = null, requestedReviewers = [] }) {
+export function buildPlanReview({ plan, versions = [], events = [], prAuthor = null, config, digestAt = {}, pr = null, requestedReviewers = [], budgetApprovers }) {
   const vs = versions.length ? [...versions] : [];
   if (!vs.some((v) => v.digest === plan.digest)) vs.push({ ...plan, offset: plan.offset || 0, at: plan.at || null, author: plan.author || null });
   const byPrefix = (p) => (p ? vs.find((v) => v.digest.startsWith(String(p).toLowerCase())) : null);
@@ -188,7 +201,7 @@ export function buildPlanReview({ plan, versions = [], events = [], prAuthor = n
   const current = vs[vIndex(plan.digest)];
   const estimate = estimatePlan(plan.body, config);
   const expanded = expandEvents(events, { planId: plan.id, digestAt, config });
-  const policy = evaluatePlan({ plan, estimate, events: expanded, prAuthor, config });
+  const policy = evaluatePlan({ plan, estimate, events: expanded, prAuthor, config, budgetApprovers });
   const sorted = [...events].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
   const expandedById = new Map(expanded.map((e) => [e.id, e]));
 
@@ -215,14 +228,15 @@ export function buildPlanReview({ plan, versions = [], events = [], prAuthor = n
       if (m.kind === 'c' && !m.data.re && m.data.t) {
         const v = byPrefix(m.data.v) || current;
         const a = m.data.a ? { start: m.data.a.s, end: m.data.a.e ?? m.data.a.s, quote: m.data.a.q || '', heading: m.data.a.h || headingFor(v.body, m.data.a.s) } : null;
-        threads.set(m.data.t, { id: m.data.t, version: v.digest, short: v.short, n: vIndex(v.digest) + 1, anchor: a, comments: [], resolved: false, resolvedBy: null, source: 'lake' });
+        threads.set(m.data.t, { id: m.data.t, version: v.digest, short: v.short, n: vIndex(v.digest) + 1, anchor: a, comments: [], resolved: false, resolvedBy: null, source: 'lake',
+          suggestion: m.data.s ? { title: String(m.data.s.title || ''), patch: m.data.s.patch, saving: m.data.s.save || null, by: raw.login, accepted: false } : null });
         threads.get(m.data.t).comments.push({ login: raw.login, text: messageOf(raw.body), at: raw.createdAt, id: raw.id, url: raw.url });
         timeline.push({ kind: 'comment', login: raw.login, at: raw.createdAt, short: v.short, n: vIndex(v.digest) + 1, text: messageOf(raw.body), thread: m.data.t, where: a?.heading || null });
       } else if (m.kind === 'c' && m.data.re && threads.has(m.data.t)) {
         threads.get(m.data.t).comments.push({ login: raw.login, text: messageOf(raw.body), at: raw.createdAt, id: raw.id, url: raw.url });
         timeline.push({ kind: 'reply', login: raw.login, at: raw.createdAt, text: messageOf(raw.body), thread: m.data.t });
       } else if (m.kind === 'resolve') {
-        resolves.push({ t: m.data.t, r: m.data.r !== false, login: raw.login, at: raw.createdAt });
+        resolves.push({ t: m.data.t, r: m.data.r !== false, login: raw.login, at: raw.createdAt, acc: !!m.data.acc, nv: m.data.nv || null });
       }
     }
     // Native GitHub line comments on the plan file
@@ -241,6 +255,7 @@ export function buildPlanReview({ plan, versions = [], events = [], prAuthor = n
   for (const r of resolves) {
     const t = threads.get(r.t); if (!t) continue;
     t.resolved = r.r; t.resolvedBy = r.r ? r.login : null; t.resolvedAt = r.r ? r.at : null;
+    if (t.suggestion && r.acc) { t.suggestion = { ...t.suggestion, accepted: true, acceptedBy: r.login, newVersion: r.nv }; timeline.push({ kind: 'accept', login: r.login, at: r.at, thread: r.t, text: t.suggestion.title, short: r.nv }); continue; }
     timeline.push({ kind: r.r ? 'resolve' : 'reopen', login: r.login, at: r.at, thread: r.t });
   }
   // Where each thread sits on the current version
@@ -259,6 +274,13 @@ export function buildPlanReview({ plan, versions = [], events = [], prAuthor = n
     if (v.self || v.bot) continue;
     if (v.action === 'revoke') { reviewers.set(v.login, { login: v.login, verdict: 'revoked', at: v.at, current: false }); continue; }
     reviewers.set(v.login, { login: v.login, verdict: v.action === 'approve' ? 'approved' : 'changes-requested', at: v.at, short: v.short, n: v.n, current: v.version === plan.digest, text: v.text, via: v.via });
+  }
+  if (policy.budget?.required) {
+    for (const b of policy.budget.approvers) {
+      if (prAuthor && b.toLowerCase() === prAuthor.toLowerCase()) continue;
+      const r = reviewers.get(b);
+      reviewers.set(b, { ...(r || { login: b, verdict: 'waiting', at: null, current: false }), budget: true });
+    }
   }
   for (const t of allThreads) for (const c of t.comments) {
     if (c.login === prAuthor) continue;
@@ -279,7 +301,7 @@ export function buildPlanReview({ plan, versions = [], events = [], prAuthor = n
   });
 
   const passing = policy.state === 'approved' || policy.state === 'auto-approved';
-  const status = passing ? policy.state : policy.state === 'changes-requested' ? 'changes-requested' : (!pr || pr.draft) ? 'draft' : 'in-review';
+  const status = passing ? policy.state : policy.state === 'changes-requested' ? 'changes-requested' : (!pr || pr.draft) ? 'draft' : policy.state === 'needs-budget' ? 'needs-budget' : 'in-review';
   const last = timeline.filter((t) => t.at).slice(-1)[0];
   return {
     id: plan.id, title: plan.title, path: planPath, digest: plan.digest, short: plan.short, body: plan.body, meta: plan.meta || {},
@@ -287,6 +309,9 @@ export function buildPlanReview({ plan, versions = [], events = [], prAuthor = n
     status, policy, estimate, rounds, round: rounds.length, threads: allThreads, verdicts, timeline, reviewers: [...reviewers.values()],
     openThreads: allThreads.filter((t) => !t.resolved && !t.outdated).length, lastActivity: last ? last.at : null,
     approveLine: `/lake approve ${plan.id}@${plan.short}`,
+    suggestions: costSuggestions(estimate, config).filter((x) => !allThreads.some((t) => t.suggestion && !t.resolved && t.version === plan.digest && JSON.stringify(t.suggestion.patch) === JSON.stringify(x.patch))),
+    modelOptions: modelOptions(estimate, config),
+    budget: policy.budget,
   };
 }
 

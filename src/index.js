@@ -7,3 +7,4 @@ export * from './hook.js';
 export * from './github.js';
 export * from './sync.js';
 export * from './init.js';
+export * from './models.js';

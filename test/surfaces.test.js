@@ -32,7 +32,7 @@ function fakePr() {
     if (p === '/issues/9/comments' && m === 'GET') return list(comments);
     if (p === '/pulls/9/reviews' || p === '/pulls/9/comments') return list([]);
     if (p === '/commits') return json([{ sha: 'h1' }]);
-    if (p.startsWith('/contents/')) return p.includes('config') ? json({}, 404) : json({ content: Buffer.from(FILE).toString('base64') });
+    if (p.startsWith('/contents/')) return p.includes('config') ? json({ content: Buffer.from('{"autoApprove":{"mode":"shadow"}}').toString('base64') }) : json({ content: Buffer.from(FILE).toString('base64') });
     if (m === 'POST' && p === '/issues/9/comments') { const c = { id: comments.length + 1, user: { login: 'noah', type: 'User' }, author_association: 'MEMBER', body: JSON.parse(opts.body).body, created_at: new Date(Date.now() + comments.length * 1000).toISOString() }; comments.push(c); return json(c, 201); }
     if (m === 'POST') return json({}, 201);
     return json({ message: 'unexpected ' + p }, 404);
@@ -98,7 +98,7 @@ test('MCP server speaks JSON-RPC over stdio', async () => {
   child.kill();
   const by = Object.fromEntries(lines.map((l) => JSON.parse(l)).map((m) => [m.id, m]));
   assert.equal(by[1].result.serverInfo.name, 'lake-gate');
-  assert.ok(by[2].result.tools.some((t) => t.name === 'lake_approve'));
+  assert.ok(by[2].result.tools.some((t) => t.name === 'lake_review'));
   assert.equal(by[3].result.isError, true);
   assert.match(by[3].result.content[0].text, /No plan id given and no active plan|No GitHub remote/);
   assert.equal(by[4].error.code, -32601);
@@ -154,6 +154,7 @@ test('init registers the MCP server for Claude Code and Cursor, idempotently, ke
 test('UI modules: markdown keeps line numbers; the demo workspace builds through the real data layer', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lake-ui-'));
   for (const f of fs.readdirSync(path.join(ROOT, 'ui')).filter((x) => x.endsWith('.js'))) fs.copyFileSync(path.join(ROOT, 'ui', f), path.join(dir, f));
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}');
   fs.symlinkSync(path.join(ROOT, 'src'), path.join(dir, 'core'));
   const md = await import(path.join(dir, 'md.js'));
   const blocks = md.parseBlocks('# T\n\nIntro line\nmore\n\n## Steps\n1. One\n   continued\n2. Two\n\n```\ncode\n```\n| a | b |\n|---|---|\n| 1 | 2 |\n');

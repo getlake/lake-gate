@@ -1,8 +1,9 @@
 import { parseConfig } from './config-core.js';
 import { readPlanText } from './plan.js';
-import { estimatePlan, range } from './estimate.js';
+import { estimatePlan, range, money } from './estimate.js';
 import { evaluatePlan, isPassing, parseCommands } from './policy.js';
 import { expandEvents } from './review.js';
+import { costSuggestions } from './models.js';
 
 export const STATUS_CONTEXT = 'lake/plan-approval';
 export const MARKER = '<!-- lake-gate:summary -->';
@@ -64,6 +65,19 @@ export async function nativeDigests(gh, events, path, { headSha, headText, confi
   return out;
 }
 
+// Budget approvers: logins as listed, "@org/team" expanded through the API when the token may read the team
+// (an Actions GITHUB_TOKEN usually may not; list logins then).
+export async function resolveBudgetApprovers(gh, config) {
+  const b = config.budget || {};
+  if (b.approverAbove == null || !(b.approvers || []).length) return undefined;
+  const out = b.approvers.filter((x) => !String(x).includes('/')).map((x) => String(x).replace(/^@/, ''));
+  for (const t of b.approvers.filter((x) => String(x).includes('/'))) {
+    const [org, slug] = String(t).replace(/^@/, '').split('/');
+    try { out.push(...(await gh.all(`~/orgs/${org}/teams/${slug}/members`)).map((u) => u.login)); } catch { /* no access to the team */ }
+  }
+  return out;
+}
+
 const isPlanPath = (f) => /^\.lake\/plans\/[^/]+\.md$/.test(f) && !f.endsWith('/README.md');
 const isCodePath = (f) => !f.startsWith('.lake/') && !/\.(md|txt)$/i.test(f) && !f.startsWith('docs/');
 
@@ -75,6 +89,7 @@ export async function evaluatePr(gh, number) {
   const planFiles = files.filter((f) => isPlanPath(f.filename) && f.status !== 'removed').map((f) => f.filename);
   const codeChanged = files.some((f) => isCodePath(f.filename));
   const events = await collectEvents(gh, number);
+  const budgetApprovers = await resolveBudgetApprovers(gh, config);
   const results = [];
   for (const p of planFiles) {
     const text = await gh.file(p, pr.head.sha);
@@ -83,7 +98,7 @@ export async function evaluatePr(gh, number) {
     const estimate = estimatePlan(plan.body, config);
     const digestAt = await nativeDigests(gh, events, p, { headSha: pr.head.sha, headText: text, config });
     const planEvents = expandEvents(events.map((e) => ({ ...e, id: `${e.source}${e.id}` })), { planId: plan.id, digestAt, config });
-    results.push({ ...evaluatePlan({ plan, estimate, events: planEvents, prAuthor: pr.user.login, config }), title: plan.title, path: p, estimate });
+    results.push({ ...evaluatePlan({ plan, estimate, events: planEvents, prAuthor: pr.user.login, config, budgetApprovers }), title: plan.title, path: p, estimate });
   }
   return { pr, config, results, codeChanged, repo: gh.repo, ...summarize(results, codeChanged, config) };
 }
@@ -98,6 +113,7 @@ export function summarize(results, codeChanged, config) {
   const bad = results.filter((r) => !isPassing(r));
   if (!bad.length) return { state: 'success', description: `${results.length} plan(s) approved for their current version` };
   const r = bad[0];
+  if (r.state === 'needs-budget') return { state: 'failure', description: `Needs budget approval for ${r.id} (up to ${money(r.budget.exposure)} > ${money(r.budget.threshold)})`.slice(0, 140) };
   return { state: 'failure', description: r.state === 'changes-requested' ? `Changes requested on ${r.id}` : `Waiting for approval: /lake approve ${r.id}@${r.short}`.slice(0, 140) };
 }
 
@@ -108,8 +124,19 @@ export function renderSummary(ev) {
   for (const r of ev.results) {
     const status = r.state === 'approved' ? `approved by ${r.approvers.map((a) => '@' + a).join(', ')}` :
       r.state === 'auto-approved' ? 'auto-approved by policy' :
-      r.state === 'changes-requested' ? `changes requested by ${r.blockers.map((a) => '@' + a).join(', ')}` : `needs ${r.needed} approval(s)`;
-    lines.push(`| [${r.title.replace(/\|/g, '/')}](${r.path}) | \`${r.short}\` | ${status} | ${r.estimate.complexity} | ${range(r.estimate.usd)} |`);
+      r.state === 'changes-requested' ? `changes requested by ${r.blockers.map((a) => '@' + a).join(', ')}` :
+      r.state === 'needs-budget' ? `approved by ${r.approvers.map((a) => '@' + a).join(', ')}, **needs budget approval**` : `needs ${r.needed} approval(s)${r.budget?.required ? ' + budget approval' : ''}`;
+    const est = r.estimate;
+    const cost = `${range(est.declared ? est.plannedUsd : est.usd)}${est.model ? ` on ${est.model.name}` : ''}${est.cap != null ? ` (cap ${money(est.cap)})` : ''}`;
+    lines.push(`| [${r.title.replace(/\|/g, '/')}](${r.path}) | \`${r.short}\` | ${status} | ${est.complexity} | ${cost} |`);
+  }
+  for (const r of ev.results.filter((x) => x.budget?.required)) {
+    lines.push('', `**Budget approval** for \`${r.id}\`: up to ${money(r.budget.exposure)} is above the team threshold of ${money(r.budget.threshold)}. ${r.budget.satisfied ? `Approved by @${r.budget.approvedBy.join(', @')} for v${r.short}.` : `One of ${r.budget.approvers.map((a) => '@' + a).join(', ') || r.budget.teams.join(', ')} must approve v${r.short} too.`}`);
+  }
+  for (const r of ev.results) {
+    const sugg = costSuggestions(r.estimate, ev.config || {});
+    if (sugg.length && !isPassing(r)) lines.push('', `<details><summary>Lake can cut \`${r.id}\` by up to ${money(Math.max(...sugg.map((x) => x.saving[1])))}</summary>`, '', ...sugg.map((x) => `- ${x.title} (saves up to ${money(x.saving[1])})`), '', 'Apply in one click on the Lake review page, or ask your agent (lake_submit_revision).', '', '</details>');
+    for (const n of r.estimate.modelNotes || []) lines.push('', `Note on \`${r.id}\`: ${n}`);
   }
   const pending = ev.results.filter((r) => !isPassing(r));
   if (pending.length) {

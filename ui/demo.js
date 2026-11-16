@@ -2,6 +2,8 @@
 // Raw inputs only (plan file versions + PR comments/reviews exactly as GitHub would return them);
 // the real lake-gate data layer (core/review.js) builds every screen from them.
 import { renderPlanFile } from './core/plan.js';
+import { patchPlanFile } from './core/workspace.js';
+import { suggestionBody } from './core/review.js';
 import { parseConfig } from './core/config-core.js';
 import { buildPlanReview, versionsFromSnapshots, commentBody, replyBody, resolveBody, verdictBody, encodeMarker } from './core/review.js';
 
@@ -12,10 +14,11 @@ export const PEOPLE = {
   leo: { name: 'Leo Park', role: 'Platform' },
   sam: { name: 'Sam Okafor', role: 'Data' },
   ines: { name: 'Inés Duarte', role: 'Product' },
+  dana: { name: 'Dana Whitfield', role: 'Eng manager · budget' },
 };
 export const VIEWER = 'noah';
 export const REPO = 'fernwood/payments-api';
-const CONFIG = parseConfig(JSON.stringify({ requiredApprovals: 2 }));
+const CONFIG = parseConfig(JSON.stringify({ requiredApprovals: 2, budget: { approverAbove: 20, approvers: ['dana'] } }));
 
 const now = Date.now();
 const ago = (min) => new Date(now - min * 60000).toISOString();
@@ -190,7 +193,33 @@ const usageEvents = [
   ev('leo', commentBody({ planId: 'usage-alerts', version: v(U1), anchor: at(U1, 'nightly job'), text: 'Nightly is fine to start. We already have hourly usage rollups if we want faster alerts later.', thread: 'u1night', via: 'Lake review' }), 22),
 ];
 
+// ---------- 6. Ledger: expensive, your plan, a model suggestion and a budget sign-off ----------
+const L1 = file('double-entry-ledger', 'Move balances to a double-entry ledger', 'noah', `# Move balances to a double-entry ledger
+
+Model: fable
+
+Balances are a mutable column today. Two concurrent refunds can both read the old balance, and finance can't reconcile a month without a spreadsheet.
+
+## Steps
+1. Add a \`ledger_entries\` table (database migration) and backfill every historical charge and refund.
+2. Rewrite the balance service to sum ledger entries, with row locking for concurrent writes.
+3. Add a nightly reconciliation job that alerts on any drift.
+4. Rename the old balance columns to \`legacy_*\`.
+5. Update the README and the runbook (optional).
+
+## Risks
+- The backfill is long. Run it in batches behind a flag.
+`);
+const ledgerEvents = [
+  ev('noah', `**Plan ready for review:** Move balances to a double-entry ledger\n@leo @ava @dana\n\nBig one. I asked for Fable because of the locking work.\n<sub>via lake-gate · Claude Code (MCP)</sub>`, 300),
+  ev('leo', commentBody({ planId: 'double-entry-ledger', version: v(L1), anchor: at(L1, 'backfill every historical'), text: 'Batch it by account and make it resumable. A 6-hour backfill will get interrupted.', thread: 'l1batch', via: 'Lake review' }), 240),
+  ev('ava', suggestionBody({ planId: 'double-entry-ledger', version: v(L1), title: 'Run the plan on Opus 5.5', patch: { type: 'planModel', model: 'Opus 5.5' }, saving: null, text: 'Opus handled our last locking change fine. Fable is a lot of money for a rename and a README.', thread: 'l1model', via: 'Lake review' }), 200),
+  ev('leo', verdictBody({ action: 'approve', planId: 'double-entry-ledger', version: v(L1), text: 'Solid. Batch the backfill.', via: 'GitHub review' }), 150),
+  ev('ava', verdictBody({ action: 'approve', planId: 'double-entry-ledger', version: v(L1), via: 'Lake review' }), 120),
+];
+
 const PRS = [
+  { number: 421, title: 'Double-entry ledger', user: 'noah', draft: false, state: 'open', branch: 'noah/ledger', reviewers: ['leo', 'ava', 'dana'], versions: [[L1, 'l1', 310, 'noah']], events: ledgerEvents },
   { number: 412, title: 'Webhook retries', user: 'maya', draft: false, state: 'open', branch: 'maya/webhook-retries', reviewers: ['noah', 'ava'], versions: [[W1, 'w1', 2920, 'maya'], [W2, 'w2', 1695, 'maya'], [W3, 'w3', 398, 'maya']], events: webhookEvents },
   { number: 418, title: 'Usage alerts', user: 'ines', draft: false, state: 'open', branch: 'ines/usage-alerts', reviewers: ['noah', 'leo'], versions: [[U1, 'u1', 50, 'ines']], events: usageEvents },
   { number: 409, title: 'Safer CSV exports', user: 'sam', draft: false, state: 'open', branch: 'sam/csv-exports', reviewers: ['maya'], versions: [[C1, 'c1', 260, 'sam']], events: csvEvents },
@@ -206,14 +235,25 @@ export function demoPost(prNumber, body) {
   extra.get(prNumber).push(e);
   return e;
 }
-export function demoReset() { extra.clear(); }
+const extraVersions = new Map();
+// The author accepts a suggestion: the plan file gets a new version on the PR branch.
+export function demoAccept(prNumber, patch) {
+  const p = PRS.find((x) => x.number === prNumber);
+  const all = [...p.versions, ...(extraVersions.get(prNumber) || [])];
+  const text = patchPlanFile(all[all.length - 1][0], patch, CONFIG);
+  if (!extraVersions.has(prNumber)) extraVersions.set(prNumber, []);
+  extraVersions.get(prNumber).push([text, `local${Date.now()}`, -(Date.now() - now) / 60000, VIEWER]);
+  return v(text);
+}
+export function demoReset() { extra.clear(); extraVersions.clear(); }
 
 export function demoWorkspace() {
   const plans = [];
   for (const p of PRS) {
-    const snaps = p.versions.map(([text, sha, min, author]) => ({ text, sha, at: ago(min), author }));
+    const vers = [...p.versions, ...(extraVersions.get(p.number) || [])];
+    const snaps = vers.map(([text, sha, min, author]) => ({ text, sha, at: ago(min), author }));
     const versions = versionsFromSnapshots(snaps, 'x');
-    const digestAt = {}; p.versions.forEach(([text, sha]) => { digestAt[sha] = v(text); });
+    const digestAt = {}; vers.forEach(([text, sha]) => { digestAt[sha] = v(text); });
     const plan = versions[versions.length - 1];
     const pr = { number: p.number, title: p.title, html_url: `https://github.com/${REPO}/pull/${p.number}`, draft: p.draft, state: p.state, merged_at: p.merged ? ago(3000) : null, head: { ref: p.branch } };
     plans.push(buildPlanReview({ plan, versions, events: [...p.events, ...(extra.get(p.number) || [])], prAuthor: p.user, config: CONFIG, digestAt, pr, requestedReviewers: p.reviewers }));

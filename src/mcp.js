@@ -4,6 +4,7 @@
 // Everything is read from and written to the PR (the single source of truth), with the GitHub token
 // already on this machine (GITHUB_TOKEN, GH_TOKEN or `gh auth token`). No Lake server.
 import fs from 'node:fs';
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { repoRoot, loadPlan, getState, exportPlan, listPlans } from './store.js';
 import { client } from './github.js';
@@ -11,7 +12,10 @@ import { parseRemote, applyEvents } from './sync.js';
 import { collectEvents, nativeDigests } from './github.js';
 import { loadPr, actions } from './workspace.js';
 import { loadConfig } from './config.js';
-import { range } from './estimate.js';
+import { range, money, estimatePlan } from './estimate.js';
+import { costSuggestions, modelOptions, applyPatch, resolveModel, describePatch } from './models.js';
+import { stripEstimate } from './plan.js';
+import { acceptBody } from './review.js';
 
 const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 const sh = (cmd, args, cwd) => { try { return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); } catch { return null; } };
@@ -19,24 +23,51 @@ const sh = (cmd, args, cwd) => { try { return execFileSync(cmd, args, { cwd, enc
 const S = (props, required = []) => ({ type: 'object', properties: props, required, additionalProperties: false });
 const str = (d) => ({ type: 'string', description: d });
 
+// Four tools, on purpose. Author side: request_review → review_status → submit_revision. Reviewer side: review.
 export const TOOLS = [
-  { name: 'lake_request_review', description: 'Save a plan (markdown) as a versioned lake-gate plan and ask teammates to review it on the PR. Returns the plan id, version, cost estimate and review link. Use after planning, before implementing.',
+  { name: 'lake_request_review', description: 'Save a plan (markdown) as a versioned lake-gate plan and ask teammates to review it on the PR. Returns the plan id, version, model and cost estimate, and the review link. Use after planning, before implementing. Tip: add a "Model: <name>" line to declare which model runs it.',
     inputSchema: S({ plan_markdown: str('Full plan in markdown. Omit to request review of an existing plan.'), plan_id: str('Plan id (defaults to the active plan, or derived from the title)'),
       reviewers: { type: 'array', items: { type: 'string' }, description: 'GitHub logins to request review from' }, note: str('Short note to reviewers'),
       push: { type: 'boolean', description: 'Commit only the plan file and push the current branch (so the PR shows this version)' } }), annotations: { openWorldHint: true } },
-  { name: 'lake_review_status', description: 'Current review state of a plan on its PR: status, verdicts with reviewer notes, and open comment threads anchored to plan sections. Set wait_seconds to wait for a decision or new feedback. Also syncs approvals locally so the lake-gate hook opens once approved.',
+  { name: 'lake_review_status', description: 'Review state of a plan: status, verdicts with notes, open comment threads anchored to plan lines, reviewer suggestions, budget approval, and the model/cost view with Lake\'s cost-cutting suggestion ids. Works locally before a PR exists. Set wait_seconds to wait for a decision or new feedback. Also syncs approvals so the lake-gate hook opens once approved.',
     inputSchema: S({ plan_id: str('Plan id (defaults to the active plan)'), wait_seconds: { type: 'number', minimum: 0, maximum: 240, description: 'Wait up to this long for a change (polls every 20s)' } }), annotations: { readOnlyHint: true, openWorldHint: true } },
-  { name: 'lake_submit_revision', description: 'Save a revised plan as a new version (this invalidates earlier approvals), mark addressed threads resolved and tell reviewers on the PR.',
-    inputSchema: S({ plan_markdown: str('Full revised plan in markdown'), plan_id: str('Plan id (defaults to the active plan)'), addressed_threads: { type: 'array', items: { type: 'string' }, description: 'Thread ids this revision addresses' },
-      note: str('What changed, for reviewers'), push: { type: 'boolean', description: 'Commit only the plan file and push' } }, ['plan_markdown']), annotations: { openWorldHint: true } },
-  { name: 'lake_reply', description: 'Reply in a comment thread on a plan.', inputSchema: S({ thread_id: str('Thread id from lake_review_status'), text: str('Reply text'), plan_id: str('Plan id') }, ['thread_id', 'text']), annotations: { openWorldHint: true } },
-  { name: 'lake_comment', description: 'Add a review comment anchored to a line range of the current plan version.',
-    inputSchema: S({ plan_id: str('Plan id'), line: { type: 'number', description: 'First line (as shown by lake_review_status)' }, end_line: { type: 'number' }, text: str('Comment') }, ['line', 'text']), annotations: { openWorldHint: true } },
-  { name: 'lake_approve', description: 'Approve the exact plan version as the human reviewer on this machine. ONLY call when the user has explicitly said to approve this plan in this conversation. Posts on the PR as the GitHub account of this machine; plan authors cannot approve their own plan.',
-    inputSchema: S({ plan_id: str('Plan id'), version: str('8-character version the user approved (from lake_review_status)'), comment: str('Optional note') }, ['plan_id', 'version']), annotations: { openWorldHint: true, destructiveHint: false } },
-  { name: 'lake_request_changes', description: 'Request changes on the exact plan version as the human reviewer on this machine. ONLY call when the user explicitly asked for it. Blocks the plan until that reviewer approves a version.',
-    inputSchema: S({ plan_id: str('Plan id'), version: str('8-character version'), comment: str('What needs to change') }, ['plan_id', 'version', 'comment']), annotations: { openWorldHint: true } },
+  { name: 'lake_submit_revision', description: 'As the author, save a new plan version (earlier approvals no longer apply) and tell reviewers. Either pass the full revised plan_markdown, or apply a suggestion in one step: thread_id (a reviewer suggestion), suggestion_id (from lake_review_status) or model (run the whole plan on that model). Can also reply to threads and mark them resolved.',
+    inputSchema: S({ plan_markdown: str('Full revised plan in markdown'), plan_id: str('Plan id (defaults to the active plan)'),
+      thread_id: str('Accept this reviewer suggestion thread'), suggestion_id: str('Apply this Lake suggestion, e.g. models-2-4, cap-12, drop-5'), model: str('Run the whole plan on this model, e.g. sonnet'),
+      addressed_threads: { type: 'array', items: { type: 'string' }, description: 'Thread ids this revision addresses (marked resolved)' },
+      note: str('What changed, for reviewers'), push: { type: 'boolean', description: 'Commit only the plan file and push' } }), annotations: { openWorldHint: true } },
+  { name: 'lake_review', description: 'As a reviewer, act on a plan PR: approve, request_changes, comment (optionally on lines), reply (in a thread) or suggest (a structured change the author accepts in one click: suggestion_id or model). approve and request_changes post as the human GitHub account on this machine: ONLY use them when the user explicitly said so in this conversation, and pass the exact version they saw.',
+    inputSchema: S({ action: { type: 'string', enum: ['approve', 'request_changes', 'comment', 'reply', 'suggest'] }, plan_id: str('Plan id'), version: str('8-character version (approve / request_changes)'),
+      text: str('Comment, reply, or verdict note (required for request_changes)'), line: { type: 'number', description: 'First plan line to anchor a comment' }, end_line: { type: 'number' },
+      thread_id: str('Thread to reply in'), suggestion_id: str('Lake suggestion id to propose'), model: str('Propose running the plan on this model') }, ['action']), annotations: { openWorldHint: true } },
 ];
+// Older tool names still work (not listed): lake_approve, lake_request_changes, lake_comment, lake_reply, lake_cost, lake_suggest, lake_apply_suggestion.
+const ALIASES = {
+  lake_approve: (a) => ['lake_review', { ...a, action: 'approve', text: a.comment }],
+  lake_request_changes: (a) => ['lake_review', { ...a, action: 'request_changes', text: a.comment }],
+  lake_comment: (a) => ['lake_review', { ...a, action: 'comment' }],
+  lake_reply: (a) => ['lake_review', { ...a, action: 'reply' }],
+  lake_suggest: (a) => ['lake_review', { ...a, action: 'suggest', text: a.comment }],
+  lake_apply_suggestion: (a) => ['lake_submit_revision', a],
+  lake_cost: (a) => ['lake_cost', a],
+};
+
+export function formatCost(est, config, sugg = costSuggestions(est, config), budget) {
+  const L = [];
+  L.push(`Cost: ${est.declared ? `${range(est.plannedUsd)} with the planned model${est.model ? ` (${est.model.name})` : 's'}` : `${range(est.usd)} with Lake's pick per step (no model declared; add a "Model: <name>" line)`}${est.cap != null ? `, capped at ${money(est.cap)}` : ''}.`);
+  L.push('Steps:', ...est.steps.map((s) => `  ${s.n}. ${s.title.slice(0, 70)} · ${s.complexity} · ${s.planned ? s.planned.name + (s.fit === 'risky' ? ' (may be too weak)' : s.fit === 'overkill' ? ' (more than needed)' : '') : 'not set'} · Lake pick ${s.model} · ${range(s.planned ? s.planned.usd : s.usd)}`));
+  L.push('Model options (whole plan):', ...modelOptions(est, config).slice(0, 7).map((o) => `  ${o.key}: ${range(o.usd)} · ${o.fit} · ${o.note}`));
+  if (sugg.length) L.push('Suggestions:', ...sugg.map((x) => `  [${x.id}] ${x.title}, saves up to ${money(x.saving[1])}`));
+  if (budget?.required) L.push(`Budget approval: up to ${money(budget.exposure)} > ${money(budget.threshold)}. ${budget.satisfied ? `Approved by @${budget.approvedBy.join(', @')}.` : `Needs one of ${budget.approvers.map((x) => '@' + x).join(', ')} to approve this version.`}`);
+  for (const n of est.modelNotes || []) L.push(`Note: ${n}`);
+  return L.join('\n');
+}
+function patchFor(a, est, config) {
+  if (a.model) { const m = resolveModel(a.model, config); if (!m) throw new Error(`Unknown model ${a.model}`); return { title: `Run the plan on ${m.name}`, patch: { type: 'planModel', model: m.name }, saving: null }; }
+  const s = costSuggestions(est, config).find((x) => x.id === a.suggestion_id);
+  if (!s) throw new Error(`No suggestion ${a.suggestion_id}. Current ones: ${costSuggestions(est, config).map((x) => x.id).join(', ') || 'none'}`);
+  return s;
+}
 
 // Context: repo root + lazily resolved GitHub client and PR. Tests inject gh/prNumber/sleep.
 export function createContext({ root = repoRoot(), gh, prNumber, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), clientName = 'MCP client', token } = {}) {
@@ -88,7 +119,11 @@ async function prModel(ctx, id) {
 export function formatReview(m, { localDigest, link } = {}) {
   const L = [];
   L.push(`Plan ${m.id} · v${m.short} (round ${m.round}) · status: ${m.status}${m.policy.needed && m.status === 'in-review' ? ` · needs ${m.policy.needed} more approval(s)` : ''}`);
-  L.push(`Estimate: ${m.estimate.complexity} complexity, ${range(m.estimate.usd)}`);
+  L.push(`Estimate: ${m.estimate.complexity} complexity, ${range(m.estimate.declared ? m.estimate.plannedUsd : m.estimate.usd)}${m.estimate.model ? ` on ${m.estimate.model.name}` : ''}`);
+  if (m.budget?.required) L.push(`Budget approval: ${m.budget.satisfied ? `done by @${m.budget.approvedBy.join(', @')}` : `needed from one of ${m.budget.approvers.map((x) => '@' + x).join(', ')} (up to ${money(m.budget.exposure)} > ${money(m.budget.threshold)})`}`);
+  if (m.suggestions?.length) L.push(`Lake suggestions: ${m.suggestions.map((x) => `[${x.id}] ${x.title} (saves up to ${money(x.saving[1])})`).join('; ')}`);
+  const sg = m.threads.filter((t) => t.suggestion && !t.resolved);
+  if (sg.length) L.push(`Reviewer suggestions (accept with lake_submit_revision thread_id): ${sg.map((t) => `[${t.id}] ${t.suggestion.title} by @${t.suggestion.by}`).join('; ')}`);
   if (localDigest && localDigest !== m.digest) L.push(`Note: your local plan file is a different version (${localDigest.slice(0, 8)}) than the PR (${m.short}). Push it so reviewers see it.`);
   const cur = m.verdicts.filter((v) => v.version === m.digest && v.action !== 'revoke');
   if (cur.length) { L.push('', 'Verdicts on this version:'); for (const v of cur) L.push(`- @${v.login} ${v.action === 'approve' ? 'approved' : 'requested changes'}${v.self ? ' (author, does not count)' : ''} via ${v.via}${v.text ? `: ${v.text.replace(/\n+/g, ' ')}` : ''}`); }
@@ -110,7 +145,21 @@ export function formatReview(m, { localDigest, link } = {}) {
 }
 
 export async function callTool(ctx, name, a = {}) {
+  if (ALIASES[name]) [name, a] = ALIASES[name](a);
+  if (!fs.existsSync(path.join(ctx.root, '.git'))) return `lake-gate: ${ctx.root} is not a git repository. Open your project folder (the repo with .lake/, set up with \`npx lake-gate init\`) in Claude Code or Cursor, then try again.`;
   const via = `${ctx.clientName} (MCP)`;
+  if (name === 'lake_review') {
+    const act = a.action;
+    if (act === 'approve' || act === 'request_changes') return callTool(ctx, act === 'approve' ? '_approve' : '_changes', { ...a, comment: a.text });
+    if (act === 'comment') return callTool(ctx, '_comment', a);
+    if (act === 'reply') return callTool(ctx, '_reply', a);
+    if (act === 'suggest') return callTool(ctx, '_suggest', { ...a, comment: a.text });
+    throw new Error('action must be approve, request_changes, comment, reply or suggest');
+  }
+  if (name === 'lake_submit_revision' && !a.plan_markdown) {
+    if (a.thread_id || a.suggestion_id || a.model) return callTool(ctx, '_apply', a);
+    throw new Error('Pass plan_markdown, or one of thread_id / suggestion_id / model.');
+  }
   switch (name) {
     case 'lake_request_review': {
       let plan; let note = '';
@@ -131,7 +180,8 @@ export async function callTool(ctx, name, a = {}) {
       const id = resolveId(ctx, a.plan_id);
       const local = loadPlan(ctx.root, id);
       let { number, model, config, events, pr } = await prModel(ctx, id);
-      if (!number) return `No open PR for this branch. Push the plan and open a PR first.${local ? ` Local plan ${id} is v${local.short}.` : ''}`;
+      const localCost = () => { if (!local) return ''; const cfg = loadConfig(ctx.root); return `\n\n${formatCost(estimatePlan(local.body, cfg), cfg)}`; };
+      if (!number) return `No open PR for this branch yet. Push the plan and open a PR so teammates can review it.${local ? ` Local plan ${id} is v${local.short}.` : ''}${localCost()}`;
       if (!model) return `PR #${number} does not contain .lake/plans/${id}.md yet. Push the plan file.`;
       const wait = Math.min(240, Math.max(0, Number(a.wait_seconds) || 0));
       const sig = (m) => `${m.status}|${m.digest}|${m.verdicts.length}|${m.threads.reduce((n, t) => n + t.comments.length, 0)}`;
@@ -163,12 +213,12 @@ export async function callTool(ctx, name, a = {}) {
       }
       return `Saved ${plan.id} v${plan.short}.${note}${number ? ` Posted the revision on PR #${number}.` : ' No PR found to notify.'}${a.push ? '' : ' Push the plan file so reviewers see this version.'} Call lake_review_status with wait_seconds to wait.`;
     }
-    case 'lake_reply': {
+    case '_reply': {
       const number = await ctx.pr(); if (!number) throw new Error('No open PR for this branch.');
       await actions.reply(ctx.github(), number, { planId: resolveId(ctx, a.plan_id), thread: a.thread_id, text: a.text, via });
       return `Replied in thread ${a.thread_id} on PR #${number}.`;
     }
-    case 'lake_comment': {
+    case '_comment': {
       const id = resolveId(ctx, a.plan_id);
       const { number, model } = await prModel(ctx, id);
       if (!model) throw new Error(`No PR with plan ${id}.`);
@@ -176,15 +226,46 @@ export async function callTool(ctx, name, a = {}) {
       await actions.comment(ctx.github(), number, { planId: id, version: model.digest, anchor: { start: s, end: e, quote: lines.slice(s - 1, e).join('\n') }, text: a.text, via });
       return `Commented on ${id} v${model.short}, line ${s}${e > s ? `–${e}` : ''}.`;
     }
-    case 'lake_approve': case 'lake_request_changes': {
+    case '_approve': case '_changes': {
       const id = a.plan_id;
       const { number, model } = await prModel(ctx, id);
       if (!model) throw new Error(`No open PR with plan ${id}.`);
       const v = String(a.version || '').toLowerCase();
       if (v.length < 7 || !model.digest.startsWith(v)) return `Not posted: version ${a.version || '(none)'} is not the current version of ${id}. The current version is ${model.short}. Show the user what changed and ask again.`;
-      if (name === 'lake_request_changes' && !String(a.comment || '').trim()) return 'Not posted: say what needs to change.';
-      await actions.verdict(ctx.github(), number, { action: name === 'lake_approve' ? 'approve' : 'reject', planId: id, version: model.digest, text: a.comment, via });
-      return `${name === 'lake_approve' ? 'Approved' : 'Requested changes on'} ${id} v${model.short} on PR #${number}. The PR check updates in a few seconds. If you are the PR author it will not count.`;
+      if (name === '_changes' && !String(a.comment || '').trim()) return 'Not posted: say what needs to change.';
+      await actions.verdict(ctx.github(), number, { action: name === '_approve' ? 'approve' : 'reject', planId: id, version: model.digest, text: a.comment, via });
+      return `${name === '_approve' ? 'Approved' : 'Requested changes on'} ${id} v${model.short} on PR #${number}. The PR check updates in a few seconds. If you are the PR author it will not count.`;
+    }
+    case 'lake_cost': {
+      const id = resolveId(ctx, a.plan_id);
+      const plan = loadPlan(ctx.root, id); if (!plan) throw new Error(`No plan ${id}`);
+      const cfg = loadConfig(ctx.root); const est = estimatePlan(plan.body, cfg);
+      return `Plan ${id} v${plan.short}\n` + formatCost(est, cfg, undefined, est.exposure > (cfg.budget?.approverAbove ?? Infinity) ? { required: true, exposure: est.exposure, threshold: cfg.budget.approverAbove, approvers: (cfg.budget.approvers || []).map((x) => String(x).replace(/^@/, '')), satisfied: false } : null);
+    }
+    case '_suggest': {
+      const { number, model, config } = await prModel(ctx, a.plan_id);
+      if (!model) throw new Error(`No open PR with plan ${a.plan_id}.`);
+      const s = patchFor(a, model.estimate, config);
+      await actions.suggest(ctx.github(), number, { planId: model.id, version: model.digest, title: s.title, patch: s.patch, saving: s.saving, text: a.comment, via });
+      return `Suggested on PR #${number}: ${s.title}. The author can accept it in one click in Lake or with lake_submit_revision.`;
+    }
+    case '_apply': {
+      const id = resolveId(ctx, a.plan_id);
+      const plan = loadPlan(ctx.root, id); if (!plan) throw new Error(`No plan ${id}`);
+      const cfg = loadConfig(ctx.root);
+      let s; let number = null;
+      if (a.thread_id) {
+        const r = await prModel(ctx, id); number = r.number;
+        const t = r.model?.threads.find((x) => x.id === a.thread_id);
+        if (!t?.suggestion) throw new Error(`Thread ${a.thread_id} is not a suggestion.`);
+        s = { title: t.suggestion.title, patch: t.suggestion.patch };
+      } else s = patchFor(a, estimatePlan(plan.body, cfg), cfg);
+      const next = applyPatch(stripEstimate(plan.body).replace(/\s+$/, '') + '\n', s.patch);
+      const { plan: np, estimate } = exportPlan(ctx.root, next, { id, source: 'mcp' });
+      let note = '';
+      if (a.push) note = '\n' + pushPlan(ctx, id, `Plan ${id}: ${s.title || describePatch(s.patch, cfg)} (v${np.short})`);
+      if (a.thread_id && number) await ctx.github().req('POST', `/issues/${number}/comments`, { body: acceptBody({ planId: id, thread: a.thread_id, title: s.title, newVersion: np.digest, via }) });
+      return `Applied "${s.title}" to ${id}: new version v${np.short}, ${range(estimate.declared ? estimate.plannedUsd : estimate.usd)}.${note}${a.push ? '' : ' Push the plan file so reviewers see it.'} Earlier approvals no longer apply.`;
     }
     default: throw new Error(`Unknown tool ${name}`);
   }

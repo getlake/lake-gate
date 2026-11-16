@@ -1,12 +1,11 @@
 // Browser-safe part of the config (no fs). config.js adds loadConfig for Node.
-// Prices are public list prices per million tokens, copied from
-// https://docs.anthropic.com/en/docs/about-claude/pricing on 2026-11-12.
-// They are assumptions for a forecast, not a quote. Edit .lake/config.json to change them.
 export const DEFAULT_CONFIG = {
   requiredApprovals: 1,
   allowedAssociations: ['OWNER', 'MEMBER', 'COLLABORATOR'],
   ignoreLogins: [],
   requirePlan: 'warn', // PR check when code changes without a plan: "off" | "warn" | "fail"
+  gateWithoutPlan: false, // true: block agent edits until there is a plan at all (strict teams)
+  try: false, // trial mode (`init --try`): `lake-gate approve` self-approves locally; never counts on the PR
   localGate: 'block', // Claude Code hook: "block" | "ask" | "off"
   gatedTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'],
   readOnlyBash: [
@@ -17,21 +16,12 @@ export const DEFAULT_CONFIG = {
   nativeReviews: true, // GitHub "Review changes → Approve / Request changes" counts for the plan version at the reviewed commit
   reviewUrl: 'https://getlake.github.io/lake-gate/app/', // Lake review UI linked from the PR summary ("" to hide the buttons)
   checkButtons: false, // experimental: Approve / Request changes buttons on a GitHub check run (needs checks: write)
-  autoApprove: { mode: 'shadow', maxUsd: 1.5, maxSteps: 3, maxComplexity: 'low' }, // mode: "off" | "shadow" | "on"
-  cacheHitShare: 0.7,
-  pricesAsOf: '2026-11-12',
-  models: {
-    fast: { name: 'Claude Haiku 5.5', inputPerMTok: 0.5, cacheReadPerMTok: 0.05, outputPerMTok: 2.5 },
-    balanced: { name: 'Claude Sonnet 5.5', inputPerMTok: 2, cacheReadPerMTok: 0.1, outputPerMTok: 10 },
-    frontier: { name: 'Claude Opus 5.5', inputPerMTok: 4, cacheReadPerMTok: 0.2, outputPerMTok: 20 },
-  },
-  tierFor: { low: 'fast', medium: 'balanced', high: 'frontier' },
-  // Rough agentic token bands per step (input includes re-read context; output is generated code/text).
-  tokens: {
-    low: { in: [120000, 400000], out: [4000, 15000] },
-    medium: { in: [400000, 1200000], out: [15000, 45000] },
-    high: { in: [1000000, 3500000], out: [35000, 120000] },
-  },
+  autoApprove: { mode: 'on', maxUsd: 1.5, maxSteps: 3, maxComplexity: 'low' }, // tiny plans pass without a human. mode: "off" | "shadow" | "on"
+  // Budget approval: above approverAbove (USD, upper estimate or the plan's "Budget cap") one of approvers
+  // (GitHub logins or "@org/team") must approve the exact version too. Off until you set both.
+  budget: { approverAbove: null, approvers: [], suggestAbove: 0, suggestCapAbove: 10 },
+  catalog: {}, // extra models in lake-meter's prices.json shape, e.g. { "my-model": { "label": "My model", "tier": "standard", "input": 1, "cacheRead": 0.1, "output": 5 } }
+  provider: 'anthropic', // model family for Lake's picks: "anthropic" | "openai". Prices: lake-meter's table (meter-core.js)
 };
 
 function isObj(v) { return v && typeof v === 'object' && !Array.isArray(v); }

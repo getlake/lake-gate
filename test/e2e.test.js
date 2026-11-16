@@ -31,8 +31,13 @@ test('end to end: init, plan mode export, gate, approval, edit invalidates, re-a
   assert.ok(fs.existsSync(path.join(repo, '.github/workflows/lake-gate.yml')));
 
   const write = { tool_name: 'Write', tool_input: { file_path: path.join(repo, 'src/queue.ts'), content: 'x' } };
-  // 1. No plan yet: implementation is blocked, reads are not gated.
-  assert.equal(decision(hook(repo, write)), 'deny');
+  // 1. No plan yet: not gated (one notice per session), reads are not gated.
+  assert.match(hook(repo, write).systemMessage, /no plan for this task, so it is not gated/);
+  assert.equal(hook(repo, write), null, 'the notice shows once');
+  const strict = path.join(repo, '.lake/config.json'); const c0 = fs.readFileSync(strict, 'utf8');
+  fs.writeFileSync(strict, JSON.stringify({ ...JSON.parse(c0), gateWithoutPlan: true }));
+  assert.equal(decision(hook(repo, write)), 'deny', 'strict teams can gate unplanned work');
+  fs.writeFileSync(strict, c0);
   assert.equal(hook(repo, { tool_name: 'Read', tool_input: { file_path: path.join(repo, 'app.js') } }), null);
   assert.equal(hook(repo, { ...write, permission_mode: 'plan' }), null);
 
@@ -85,15 +90,33 @@ test('end to end: init, plan mode export, gate, approval, edit invalidates, re-a
   assert.equal(off.stdout.trim(), '');
 });
 
+test('init --try: a solo evaluator approves locally; agents cannot; it never counts on the PR', () => {
+  const repo = tmpRepo();
+  assert.match(cli(repo, ['init', '--try']).stdout, /Trial mode/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(repo, '.lake/config.json'), 'utf8')).try, true);
+  cli(repo, ['plan', '-', '--id', 'big'], PLAN);
+  const write = { tool_name: 'Write', tool_input: { file_path: path.join(repo, 'src/q.ts'), content: 'x' } };
+  const d = hook(repo, write);
+  assert.equal(decision(d), 'deny'); assert.match(d.hookSpecificOutput.permissionDecisionReason, /npx lake-gate approve/);
+  assert.equal(decision(hook(repo, { tool_name: 'Bash', tool_input: { command: 'npx lake-gate approve' } })), 'deny');
+  const a = cli(repo, ['approve']);
+  assert.equal(a.status, 0, a.stderr); assert.match(a.stdout, /trial self-approval/);
+  assert.equal(hook(repo, write), null);
+  assert.match(cli(repo, ['status']).stdout, /approved \(trial, local only\)/);
+  const repo2 = tmpRepo(); cli(repo2, ['init']); cli(repo2, ['plan', '-', '--id', 'big'], PLAN);
+  assert.equal(cli(repo2, ['approve']).status, 1, 'no self-approval outside trial mode');
+});
+
 test('small plans pass with auto-approve on, and only then', () => {
   const repo = tmpRepo();
   cli(repo, ['init']);
   const cfgPath = path.join(repo, '.lake/config.json');
   const r = cli(repo, ['plan', '-', '--id', 'readme-typo'], '# Readme\n1. Fix typo in README\n');
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(cli(repo, ['check']).status, 1); // shadow mode by default
-  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); cfg.autoApprove.mode = 'on'; fs.writeFileSync(cfgPath, JSON.stringify(cfg));
-  assert.equal(cli(repo, ['check']).status, 0);
+  assert.equal(cli(repo, ['check']).status, 0, 'tiny plans pass by default');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); cfg.autoApprove.mode = 'shadow'; fs.writeFileSync(cfgPath, JSON.stringify(cfg));
+  assert.equal(cli(repo, ['check']).status, 1, 'shadow mode: a human decides');
+  cfg.autoApprove.mode = 'on'; fs.writeFileSync(cfgPath, JSON.stringify(cfg));
   cli(repo, ['plan', '-', '--id', 'big'], PLAN);
   assert.equal(cli(repo, ['check']).status, 1);
 });

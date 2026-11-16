@@ -1,4 +1,5 @@
 import { autoApproveVerdict } from './estimate.js';
+import { budgetRule } from './models.js';
 
 // Commands, one per line, in a PR comment or review body:
 //   /lake approve <plan-id>@<digest-prefix>
@@ -13,7 +14,7 @@ export function parseCommands(body) {
 }
 
 // events: [{ login, type: 'User'|'Bot', association, body, createdAt, source: 'comment'|'review' }]
-export function evaluatePlan({ plan, estimate, events, prAuthor, config }) {
+export function evaluatePlan({ plan, estimate, events, prAuthor, config, budgetApprovers }) {
   const approvals = new Map();
   const blockers = new Map();
   const notes = [];
@@ -37,12 +38,19 @@ export function evaluatePlan({ plan, estimate, events, prAuthor, config }) {
     }
   }
   const auto = estimate ? autoApproveVerdict(estimate, config) : { eligible: false, mode: 'off', reasons: [] };
+  // Budget: above config.budget.approverAbove one of the budget approvers must approve this exact version too
+  // (their approval also counts toward requiredApprovals).
+  const rule = estimate ? budgetRule(estimate, config, budgetApprovers) : { required: false };
+  const lc = (x) => String(x).toLowerCase();
+  const budgetBy = rule.required ? [...approvals.keys()].filter((a) => rule.approvers.some((b) => lc(b) === lc(a))) : [];
+  const budget = rule.required ? { ...rule, approvedBy: budgetBy, satisfied: budgetBy.length > 0 } : { required: false, satisfied: true };
   let state;
   if (blockers.size) state = 'changes-requested';
-  else if (approvals.size >= config.requiredApprovals) state = 'approved';
-  else if (auto.mode === 'on' && auto.eligible) state = 'auto-approved';
+  else if (approvals.size >= config.requiredApprovals && budget.satisfied) state = 'approved';
+  else if (approvals.size >= config.requiredApprovals) state = 'needs-budget';
+  else if (auto.mode === 'on' && auto.eligible && !budget.required) state = 'auto-approved';
   else state = 'pending';
-  return { id: plan.id, digest: plan.digest, short: plan.short, state, approvers: [...approvals.keys()], blockers: [...blockers.keys()], auto, notes,
+  return { id: plan.id, digest: plan.digest, short: plan.short, state, approvers: [...approvals.keys()], blockers: [...blockers.keys()], auto, notes, budget,
     needed: Math.max(0, config.requiredApprovals - approvals.size) };
 }
 

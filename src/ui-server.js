@@ -15,7 +15,7 @@ import { plansDir } from './store.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(HERE, '..', 'ui');
-export const CORE_FILES = ['plan.js', 'sha256.js', 'estimate.js', 'policy.js', 'config-core.js', 'review.js', 'workspace.js', 'github.js'];
+export const CORE_FILES = ['plan.js', 'sha256.js', 'estimate.js', 'policy.js', 'config-core.js', 'review.js', 'workspace.js', 'github.js', 'models.js', 'meter-core.js'];
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.png': 'image/png', '.json': 'application/json' };
 const sh = (cmd, args, cwd) => { try { return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 32 * 1024 * 1024 }); } catch { return null; } };
 

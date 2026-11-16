@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { loadConfig } from './config.js';
-import { repoRoot, stateDir, getState, loadPlan, exportPlan, localStatus } from './store.js';
+import { repoRoot, stateDir, getState, setState, loadPlan, exportPlan, localStatus } from './store.js';
 import { range } from './estimate.js';
 
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -12,7 +12,8 @@ function out(decision, reason, extra = {}) {
     hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason } };
 }
 
-function approveHint(plan) {
+function approveHint(plan, config) {
+  if (config?.try) return `Trial mode: the user can run \`npx lake-gate approve\` to approve it locally (does not count on the PR).`;
   return `Commit .lake/plans/${plan.id}.md, push and open a PR. A teammate (not you) comments:\n  /lake approve ${plan.id}@${plan.short}\nThen run: npx lake-gate sync`;
 }
 
@@ -46,6 +47,7 @@ export function handleClaudePreToolUse(input, env = process.env) {
     const cmd = String(ti.command || '');
     if (/\.git\/lake|lake[\\/]+(state|approvals)\.json/.test(cmd)) return out('deny', 'Lake: local approval state cannot be edited by the agent.');
     if (/lake-gate(@\S+)?\s+use\b/.test(cmd)) return out('deny', 'Lake: switching the active plan is a human action. Ask the user to run `npx lake-gate use <id>`.');
+    if (/lake-gate(@\S+)?\s+approve\b/.test(cmd)) return out('deny', 'Lake: approving is a human action. Ask the user to run `npx lake-gate approve` themselves.');
     const ro = config.readOnlyBash.some((r) => new RegExp(r).test(cmd)) && !/[;&|`$()<>]/.test(cmd.replace(/2>&1|\|\s*(head|tail|wc|rg|grep|sort|uniq)\b[^|;&]*/g, ''));
     if (ro) return null;
   }
@@ -55,11 +57,17 @@ export function handleClaudePreToolUse(input, env = process.env) {
   const activeId = (input.session_id && state.sessions[input.session_id]) || state.active;
   const plan = activeId && loadPlan(root, activeId);
   if (!plan) {
-    return out(decision, 'Lake: no plan for this work yet. Write a short plan first (Claude Code plan mode, then exit plan mode) or export one with `npx lake-gate plan <file.md>`. Implementation is gated until the plan is approved by a teammate.');
+    // Only planned work is gated, so installing lake-gate never blocks a typo fix. Teams that want every
+    // change planned set "gateWithoutPlan": true.
+    if (config.gateWithoutPlan) return out(decision, 'Lake: no plan for this work yet. Write a short plan first (Claude Code plan mode, then exit plan mode) or export one with `npx lake-gate plan <file.md>`. Implementation is gated until the plan is approved by a teammate.');
+    const sid = input.session_id || 'default';
+    if ((state.noticed || []).includes(sid)) return null;
+    state.noticed = [...(state.noticed || []).slice(-50), sid]; setState(root, state);
+    return out(null, null, { systemMessage: 'lake-gate: no plan for this task, so it is not gated. Use plan mode to gate bigger work.' });
   }
   const st = localStatus(root, plan, config);
   if (st.state === 'approved' || st.state === 'auto-approved') return null;
   const why = st.state === 'changes-requested' ? `changes were requested by ${(st.blockers || []).map((b) => '@' + b).join(', ')}` :
     st.stale ? 'the plan was edited after it was approved, so the approval no longer applies' : 'it is not approved yet';
-  return out(decision, `Lake: plan "${plan.id}" version ${plan.short} blocks implementation because ${why}. Do not work around this gate; stop and tell the user.\n${approveHint(plan)}`);
+  return out(decision, `Lake: plan "${plan.id}" version ${plan.short} blocks implementation because ${why}. Do not work around this gate; stop and tell the user.\n${approveHint(plan, config)}`);
 }

@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { repoRoot, exportPlan, loadPlan, listPlans, getState, setState, localStatus } from './store.js';
+import { repoRoot, exportPlan, loadPlan, listPlans, getState, setState, localStatus, getApprovals, setApprovals } from './store.js';
 import { loadConfig } from './config.js';
 import { estimatePlan, renderEstimate, range } from './estimate.js';
 import { handleClaudePreToolUse } from './hook.js';
@@ -11,7 +11,9 @@ import { serve as serveMcp } from './mcp.js';
 const HELP = `lake-gate: version-bound team approval for AI coding agent plans
 
 Usage:
-  lake-gate init [--action-ref owner/repo@ref] [--force]   Set up .lake/, the Claude Code hook and the GitHub workflow
+  lake-gate init [--try] [--force]                        Set up .lake/, the Claude Code hook, MCP and the GitHub workflow
+                                                           --try: solo trial, approve your own plans locally
+  lake-gate approve [id]                                   Trial mode only: approve the active plan locally (never counts on the PR)
   lake-gate plan <file.md|->  [--id name]                 Save a plan (any agent) to .lake/plans/ with an estimate; make it active
   lake-gate estimate <file.md|->                          Print complexity, model per step and cost range
   lake-gate status                                         Active plan, version and approval state
@@ -30,7 +32,8 @@ const readInput = (f) => (f === '-' || !f ? fs.readFileSync(0, 'utf8') : fs.read
 function describe(root, plan) {
   const st = localStatus(root, plan);
   const extra = st.state === 'pending' ? (st.stale ? ' (approval is for an older version)' : '') + `\n  approve on the PR: /lake approve ${plan.id}@${plan.short}` : st.approvers?.length ? ` by ${st.approvers.map((a) => '@' + a).join(', ')}` : '';
-  return `${plan.id}  v${plan.short}  ${st.estimate.complexity}  est. ${range(st.estimate.usd)}  ${st.state}${extra}`;
+  const e = st.estimate;
+  return `${plan.id}  v${plan.short}  ${e.complexity}  est. ${range(e.declared ? e.plannedUsd : e.usd)}${e.model ? ` on ${e.model.name}` : ''}  ${st.state}${st.trial ? ' (trial, local only)' : ''}${extra}`;
 }
 
 export async function main(argv = process.argv.slice(2), io = { out: (s) => process.stdout.write(s + '\n'), err: (s) => process.stderr.write(s + '\n') }) {
@@ -38,8 +41,10 @@ export async function main(argv = process.argv.slice(2), io = { out: (s) => proc
   const root = repoRoot();
   switch (cmd) {
     case 'init': {
-      for (const l of init(root, { actionRef: flag(args, '--action-ref') || ACTION_REF, force: args.includes('--force') })) io.out(l);
-      io.out('\nNext:\n  1. git add .lake .claude .github && git commit -m "Add lake-gate"\n  2. In GitHub branch protection, require the status check "lake/plan-approval".\n  3. Optional: npm i -D lake-gate (faster hook than npx).');
+      const trial = args.includes('--try');
+      for (const l of init(root, { actionRef: flag(args, '--action-ref') || ACTION_REF, force: args.includes('--force'), trial })) io.out(l);
+      if (trial) io.out('\nTrial mode. Try the loop in 2 minutes:\n  1. In Claude Code, plan a task in plan mode and accept the plan. Edits are now gated.\n  2. npx lake-gate approve      (you approve your own plan, locally only)\n  3. The agent continues. Edit the plan and it is gated again.\nFor your team: remove "try" from .lake/config.json, then:');
+      io.out(`${trial ? '' : '\nNext:\n'}  git add .lake .claude .github .mcp.json .cursor && git commit -m "Add lake-gate" && git push\n  Then review plans with: npx lake-gate ui   (or in GitHub with Review changes → Approve)\n  Optional: require the "lake/plan-approval" status check in branch protection.`);
       return 0;
     }
     case 'plan': {
@@ -79,6 +84,17 @@ export async function main(argv = process.argv.slice(2), io = { out: (s) => proc
       const ok = st.state === 'approved' || st.state === 'auto-approved';
       (ok ? io.out : io.err)(describe(root, plan));
       return ok ? 0 : 1;
+    }
+    case 'approve': {
+      const cfg = loadConfig(root);
+      if (!cfg.try) { io.err('lake-gate approve works in trial mode only (npx lake-gate init --try). On a team, a teammate approves on the PR or in `npx lake-gate ui`.'); return 1; }
+      const id = args[0] || getState(root).active; const plan = id && loadPlan(root, id);
+      if (!plan) { io.err('lake-gate: no plan to approve.'); return 1; }
+      const store = getApprovals(root);
+      store[plan.id] = { digest: plan.digest, state: 'approved', approvers: ['you (trial)'], trial: true, syncedAt: new Date().toISOString() };
+      setApprovals(root, store);
+      io.out(`Approved ${plan.id} v${plan.short} locally (trial self-approval, does not count on the PR). The agent can build this version.`);
+      return 0;
     }
     case 'use': {
       if (!args[0] || !loadPlan(root, args[0])) { io.err(`No plan named ${args[0]}`); return 1; }

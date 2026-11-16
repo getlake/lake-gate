@@ -22,7 +22,7 @@ Context: deliveries fail silently today.
 4. Add replay and failure tests
 `;
 
-export function fakeGitHub({ prAuthor = 'maya', files = [], contents = {}, baseConfig = null, comments = [], reviews = [] } = {}) {
+export function fakeGitHub({ prAuthor = 'maya', files = [], contents = {}, baseConfig = '{"autoApprove":{"mode":"shadow"}}', comments = [], reviews = [] } = {}) {
   const calls = [];
   const pr = { number: 7, user: { login: prAuthor }, head: { sha: 'headsha' }, base: { sha: 'basesha' } };
   const json = (v, status = 200) => ({ ok: status < 400, status, json: async () => v, text: async () => JSON.stringify(v) });

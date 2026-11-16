@@ -26,12 +26,14 @@ test('complexity and model per step', () => {
   assert.equal(classifyStep('Database migration for auth tokens').complexity, 'high');
   assert.equal(classifyStep('Add a retry queue').complexity, 'medium');
   const est = estimatePlan(PLAN, DEFAULT_CONFIG);
-  assert.deepEqual(est.steps.map((s) => s.complexity), ['medium', 'high', 'low', 'medium']);
-  assert.equal(est.steps[2].model, 'Claude Haiku 5.5');
+  assert.deepEqual(est.steps.map((s) => s.complexity), ['medium', 'high', 'low', 'low']);
+  assert.equal(est.steps[2].model, 'Haiku 5.5');
+  assert.deepEqual(est.steps.map((s) => s.level), [3, 5, 1, 2], 'same 1-5 scale as lake-meter');
+  assert.deepEqual(est.usd.map((x) => Number(x.toFixed(4))), [2.3189, 8.9489], 'same dollars as `lake-meter plan` for this plan');
   assert.equal(est.complexity, 'high');
   assert.ok(est.usd[0] > 0 && est.usd[0] < est.usd[1]);
   assert.ok(est.frontierUsd[1] > est.usd[1], 'routing per step should be cheaper than all-frontier');
-  assert.match(renderEstimate(est, DEFAULT_CONFIG), /\| 3 \| Fix typo in README \| low \| Claude Haiku 5\.5 \|/);
+  assert.match(renderEstimate(est, DEFAULT_CONFIG), /\| 3 \| Fix typo in README \| low \| Haiku 5\.5 \|/);
 });
 
 test('auto-approve threshold', () => {
@@ -45,7 +47,7 @@ test('auto-approve threshold', () => {
 
 const plan = { id: 'add-webhook-retries', digest: digestOf(PLAN), short: digestOf(PLAN).slice(0, 8) };
 const ev = (login, body, createdAt, o = {}) => ({ login, body, createdAt, type: o.type || 'User', association: o.association || 'MEMBER' });
-const cfg = DEFAULT_CONFIG;
+const cfg = merge(DEFAULT_CONFIG, { autoApprove: { mode: 'shadow' } });
 
 test('parses commands', () => {
   assert.deepEqual(parseCommands('LGTM\n/lake approve a@abcdef12\n/lake revoke b'), [{ action: 'approve', id: 'a', digest: 'abcdef12' }, { action: 'revoke', id: 'b', digest: null }]);

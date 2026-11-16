@@ -1,52 +1,38 @@
-import { extractSteps } from './plan.js';
+import { normalizeBody } from './plan.js';
+import { analyzePlan, scoreStep, PRICES } from './meter-core.js';
+import { applyDeclarations } from './models.js';
 
 const RANK = { low: 0, medium: 1, high: 2 };
 export const complexityRank = (c) => RANK[c] ?? 1;
 
-const HIGH = /\b(migrat\w*|schema|database|auth\w*|security|secret|payment|billing|concurren\w*|race|lock(ing)?|distributed|encrypt\w*|permission\w*|architect\w*|rewrite|re-?architect|multi-?tenant|infra\w*|deploy\w*|kubernetes|cache invalidation|backfill|data model|breaking change)\b/i;
-const LOW = /\b(typo|rename|copy|wording|docs?|readme|comment|bump|version bump|lint|format\w*|style|log message|changelog|config value|constant|label|tooltip|text)\b/i;
-const MANY_FILES = /\b(across|all|every|each)\s+(the\s+)?(files|modules|services|packages|endpoints|components|call ?sites)\b/i;
-const TESTS = /\b(test|tests|spec|e2e|integration)\b/i;
-
+// Kept for callers of 0.1: classify one step with the shared scorer.
 export function classifyStep(text) {
-  const reasons = [];
-  let score = 1;
-  const h = text.match(HIGH); const l = text.match(LOW);
-  if (h) { score += 1; reasons.push(`mentions "${h[0]}"`); }
-  if (MANY_FILES.test(text)) { score += 1; reasons.push('touches many files'); }
-  if (l && !h) { score -= 1; reasons.push(`looks small ("${l[0]}")`); }
-  const words = text.split(/\s+/).length;
-  if (words > 80) { score += 1; reasons.push('long step'); }
-  if (TESTS.test(text) && score < 2 && !l) reasons.push('includes tests');
-  const complexity = score <= 0 ? 'low' : score === 1 ? 'medium' : 'high';
-  if (!reasons.length) reasons.push('default');
-  return { complexity, reasons };
+  const { complexity, reasons } = scoreStep({ title: text, body: '' });
+  return { complexity: levelToComplexity(complexity), level: complexity, reasons };
 }
 
-const usd = (tokIn, tokOut, m, hit) => (tokIn * (1 - hit) * m.inputPerMTok + tokIn * hit * m.cacheReadPerMTok + tokOut * m.outputPerMTok) / 1e6;
-
+// One estimator for all Lake tools: steps, complexity 1-5, model picks and prices come from lake-meter's
+// analyzePlan and price table (src/meter-core.js). complexity keeps the low/medium/high label for policy;
+// level is the 1-5 score.
+export const levelToComplexity = (n) => (n <= 2 ? 'low' : n === 3 ? 'medium' : 'high');
+export function pricesFor(config) {
+  const extra = config.catalog || {};
+  return Object.keys(extra).length ? { ...PRICES, models: { ...PRICES.models, ...extra } } : PRICES;
+}
 export function estimatePlan(body, config) {
-  const steps = extractSteps(body).map((s, i) => {
-    const { complexity, reasons } = classifyStep(s.text);
-    const tier = config.tierFor[complexity];
-    const model = config.models[tier];
-    const band = config.tokens[complexity];
-    const hit = config.cacheHitShare;
-    const lo = usd(band.in[0], band.out[0], model, hit);
-    const hi = usd(band.in[1], band.out[1], model, hit);
-    const top = config.models.frontier;
-    return { n: i + 1, title: s.title.slice(0, 90), complexity, reasons, tier, model: model.name, tokens: band,
-      usd: [lo, hi], frontierUsd: [usd(band.in[0], band.out[0], top, hit), usd(band.in[1], band.out[1], top, hit)] };
-  });
-  const sum = (k, i) => steps.reduce((a, s) => a + s[k][i], 0);
-  const maxC = steps.reduce((a, s) => (complexityRank(s.complexity) > complexityRank(a) ? s.complexity : a), 'low');
-  return {
+  const prices = pricesFor(config);
+  const a = analyzePlan(normalizeBody(body), prices, { provider: config.provider || 'anthropic' });
+  const steps = a.steps.map((s) => ({ n: s.n, title: s.title.replace(/\s*[([]\s*model\s*:\s*[^)\]]+[)\]]/i, '').slice(0, 90), complexity: levelToComplexity(s.complexity), level: s.complexity, reasons: s.reasons, tier: s.tier,
+    model: s.modelLabel, modelKey: s.model, tokens: prices.assumptions.stepTokens[String(s.complexity)], usd: s.usd, frontierUsd: s.baselineUsd }));
+  const maxC = steps.reduce((m, s) => (complexityRank(s.complexity) > complexityRank(m) ? s.complexity : m), 'low');
+  return applyDeclarations({
     steps,
     complexity: maxC,
-    usd: [sum('usd', 0), sum('usd', 1)],
-    frontierUsd: [sum('frontierUsd', 0), sum('frontierUsd', 1)],
-    pricesAsOf: config.pricesAsOf,
-  };
+    usd: a.total.usd,
+    frontierUsd: a.total.baselineUsd,
+    baseline: a.baselineLabel,
+    pricesAsOf: a.pricesVerifiedAt,
+  }, body, config);
 }
 
 export const money = (n) => (n < 0.1 ? `$${n.toFixed(3)}` : n < 10 ? `$${n.toFixed(2)}` : `$${Math.round(n)}`);
@@ -56,14 +42,16 @@ export function autoApproveVerdict(est, config) {
   const a = config.autoApprove || {};
   if (!a.mode || a.mode === 'off') return { eligible: false, mode: 'off', reasons: [] };
   const reasons = [];
-  if (est.usd[1] > a.maxUsd) reasons.push(`upper estimate ${money(est.usd[1])} > ${money(a.maxUsd)}`);
+  const top = est.exposure ?? est.usd[1];
+  if (top > a.maxUsd) reasons.push(`upper estimate ${money(top)} > ${money(a.maxUsd)}`);
+  if (config.budget?.approverAbove != null && top > config.budget.approverAbove) reasons.push('needs budget approval');
   if (est.steps.length > a.maxSteps) reasons.push(`${est.steps.length} steps > ${a.maxSteps}`);
   if (complexityRank(est.complexity) > complexityRank(a.maxComplexity)) reasons.push(`complexity ${est.complexity} > ${a.maxComplexity}`);
   return { eligible: reasons.length === 0, mode: a.mode, reasons };
 }
 
 export function renderEstimate(est, config) {
-  const rows = est.steps.map((s) => `| ${s.n} | ${s.title.replace(/\|/g, '/')} | ${s.complexity} | ${s.model} | ${range(s.usd)} |`);
+  const rows = est.steps.map((s) => `| ${s.n} | ${s.title.replace(/\|/g, '/')} | ${s.complexity} | ${est.declared ? `${s.planned ? `${s.planned.name}${s.fit === 'risky' ? ' (may be too weak)' : ''}` : 'not set'} | ` : ''}${s.model} | ${range(s.planned ? s.planned.usd : s.usd)} |`);
   const auto = autoApproveVerdict(est, config);
   const autoLine = auto.mode === 'off' ? '' : auto.eligible
     ? `\nAuto-approve policy (${auto.mode}): ${auto.mode === 'on' ? 'this plan is auto-approved' : 'this plan would be auto-approved'} (small, low cost).`
@@ -71,12 +59,12 @@ export function renderEstimate(est, config) {
   return [
     '## Lake estimate',
     '',
-    `Overall complexity: **${est.complexity}** · Estimated cost with the recommended model per step: **${range(est.usd)}** (all steps on ${config.models.frontier.name}: ${range(est.frontierUsd)})`,
+    `Overall complexity: **${est.complexity}** · ${est.declared ? `Planned model${est.model ? ` **${est.model.name}**` : 's per step'}: **${range(est.plannedUsd)}** · Lake mix (cheapest model that fits each step): ${range(est.usd)}` : `Estimated cost with the recommended model per step: **${range(est.usd)}** (all steps on ${est.baseline}: ${range(est.frontierUsd)})`}${est.cap != null ? ` · Budget cap **${money(est.cap)}**` : ''}`,
     '',
-    '| # | Step | Complexity | Recommended model | Est. cost |',
-    '|---|---|---|---|---|',
+    est.declared ? '| # | Step | Complexity | Planned model | Recommended model | Est. cost |' : '| # | Step | Complexity | Recommended model | Est. cost |',
+    est.declared ? '|---|---|---|---|---|---|' : '|---|---|---|---|---|',
     ...rows,
     '',
-    `Rough forecast from keyword heuristics and API list prices as of ${est.pricesAsOf}, assuming ${Math.round(config.cacheHitShare * 100)}% cache hits. Not a quote, not a cap. Subscription plans spend quota, not these dollars.` + autoLine,
+    `Same estimator and price table as lake-meter (API list prices as of ${est.pricesAsOf}). Not a quote. Subscription plans spend quota, not these dollars.` + autoLine,
   ].join('\n');
 }

@@ -15,7 +15,7 @@ import { client, evaluatePr, renderSummary, fromBase64 } from '../src/github.js'
 import { loadPr, actions } from '../src/workspace.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const CFG = parseConfig(JSON.stringify({ requiredApprovals: 1 }));
+const CFG = parseConfig(JSON.stringify({ requiredApprovals: 1, autoApprove: { mode: 'shadow' } }));
 
 const V1 = renderPlanFile({ id: 'retries', title: 'Retries', author: 'maya', body: '# Retries\n\n## Steps\n1. Retry forever every 30s\n2. Store the payload\n3. Add tests\n', estimateMd: '## Lake estimate\nx' });
 const V2 = renderPlanFile({ id: 'retries', title: 'Retries', author: 'maya', body: '# Retries\n\n## Steps\n1. Retry 6 times with exponential backoff\n2. Store the payload\n3. Add tests for backoff\n', estimateMd: '## Lake estimate\ny' });
@@ -92,7 +92,7 @@ test('native GitHub review buttons and line comments map onto the same model; pr
   assert.equal(m.verdicts[0].via, 'GitHub review'); assert.equal(m.verdicts[0].n, 1);
   m = buildPlanReview({ plan: v2, versions, events: [{ ...approveOld, commitId: 's2' }], prAuthor: 'maya', config: CFG, digestAt, pr: { number: 7 } });
   assert.equal(m.status, 'approved');
-  m = buildPlanReview({ plan: v2, versions, events: [{ ...approveOld, commitId: 's2' }], prAuthor: 'maya', config: parseConfig('{"nativeReviews":false}'), digestAt, pr: { number: 7 } });
+  m = buildPlanReview({ plan: v2, versions, events: [{ ...approveOld, commitId: 's2' }], prAuthor: 'maya', config: parseConfig('{"nativeReviews":false,"autoApprove":{"mode":"shadow"}}'), digestAt, pr: { number: 7 } });
   assert.equal(m.status, 'in-review', 'can be turned off');
   m = buildPlanReview({ plan: v2, versions, events: [{ ...approveOld, state: 'CHANGES_REQUESTED', commitId: 's2', body: 'no' }], prAuthor: 'maya', config: CFG, digestAt, pr: { number: 7 } });
   assert.equal(m.status, 'changes-requested');
@@ -121,7 +121,7 @@ test('diff and anchor relocation', () => {
 });
 
 // A GitHub API fake with commits, files at refs, issue comments, reviews and line comments.
-function fakeRepo({ commits, files, comments = [], reviews = [], lines = [], config = null, prUser = 'maya' }) {
+function fakeRepo({ commits, files, comments = [], reviews = [], lines = [], config = '{"autoApprove":{"mode":"shadow"}}', prUser = 'maya' }) {
   const calls = [];
   const head = commits[commits.length - 1].sha;
   const pr = { number: 9, title: 'Retries', user: { login: prUser }, head: { sha: head, ref: 'maya/retries' }, base: { sha: 'base' }, html_url: 'https://github.com/acme/app/pull/9', draft: false, state: 'open', requested_reviewers: [{ login: 'noah' }] };
@@ -201,7 +201,7 @@ test('experimental check-run buttons: a click by a writer is relayed and counts;
   const { runAction, checkActions } = await import('../src/action.js');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lake-cb-'));
   const evPath = path.join(dir, 'e.json');
-  const f = repoFixture({ config: JSON.stringify({ checkButtons: true }) });
+  const f = repoFixture({ config: JSON.stringify({ checkButtons: true, autoApprove: { mode: 'shadow' } }) });
   const short = d(V2).short;
   const run = (sender, identifier, headSha = 'c3') => { fs.writeFileSync(evPath, JSON.stringify({ action: 'requested_action', requested_action: { identifier }, sender: { login: sender, type: 'User' }, check_run: { head_sha: headSha, pull_requests: [{ number: 9 }] } })); return runAction({ GITHUB_EVENT_PATH: evPath, GITHUB_EVENT_NAME: 'check_run', GITHUB_REPOSITORY: 'acme/app', INPUT_TOKEN: 't' }, f.fetchImpl); };
   let r = await run('rita', `approve:${short}`);

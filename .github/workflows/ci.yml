@@ -12,3 +12,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm test
+      - name: CLI ships ui and mcp
+        run: node bin/lake-gate.js --help | tee /dev/stderr | grep -q 'lake-gate ui' && node bin/lake-gate.js --help | grep -q 'lake-gate mcp'
+      - name: Packed tarball has the review app and MCP server
+        run: npm pack --dry-run 2>&1 | tee /dev/stderr | grep -q 'ui/app.js' && npm pack --dry-run 2>&1 | grep -q 'src/mcp.js'

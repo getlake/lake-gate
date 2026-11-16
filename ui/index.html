@@ -15,6 +15,8 @@
 <body>
 <svg class="sprite" aria-hidden="true">
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9L12 17.5l-1.9-5.1L5 10.5l5.1-1.9z"/><path d="M18.5 16l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5"/><path d="M10 10h4v4h-4zM9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
   <symbol id="i-msg" viewBox="0 0 24 24"><path d="M5 5h14a2 2 0 012 2v8a2 2 0 01-2 2h-7l-4.5 3.5V17H5a2 2 0 01-2-2V7a2 2 0 012-2z"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
@@ -42,8 +44,12 @@
   <symbol id="i-pause" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M10 9v6M14 9v6"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 11-2.2-5.3M19.5 4.5v4h-4"/></symbol>
 </svg>
-<div id="app" aria-live="polite"></div>
+<div id="app" aria-live="polite"><div class="loading" style="min-height:60vh;display:grid;place-items:center;color:#5b767c;font:500 14px Inter,system-ui,sans-serif"><span>Loading Lake review…</span></div></div>
 <div id="toast" role="status" aria-live="polite"></div>
 <script type="module" src="app.js"></script>
+<script>
+// If the app module fails to load (old cache, blocked file), say so instead of a blank page.
+window.__lakeBoot = setTimeout(function () { var a = document.getElementById('app'); if (a && a.textContent.indexOf('Loading Lake review') >= 0) a.innerHTML = '<div style="min-height:60vh;display:grid;place-items:center;text-align:center;font:500 14px Inter,system-ui,sans-serif;color:#073f4b"><div><b style="display:block;font-size:16px;margin-bottom:6px">Couldn\'t load the review app.</b>Reload the page, or run <code>npx lake-gate ui</code> in your repo.</div></div>'; }, 6000);
+</script>
 </body>
 </html>

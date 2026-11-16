@@ -78,7 +78,7 @@ export function exportPlan(root, markdown, { id, source, sessionId, author } = {
 export function localStatus(root, plan, config = loadConfig(root)) {
   const est = estimatePlan(plan.body, config);
   const rec = getApprovals(root)[plan.id];
-  if (rec && rec.digest === plan.digest && (rec.state === 'approved' || rec.state === 'auto-approved')) return { state: rec.state, approvers: rec.approvers || [], estimate: est, synced: rec };
+  if (rec && rec.digest === plan.digest && (rec.state === 'approved' || rec.state === 'auto-approved')) return { state: rec.state, approvers: rec.approvers || [], estimate: est, synced: rec, trial: !!rec.trial };
   if (rec && rec.digest === plan.digest && rec.state === 'changes-requested') return { state: 'changes-requested', approvers: [], blockers: rec.blockers, estimate: est, synced: rec };
   const a = config.autoApprove || {};
   if (a.mode === 'on') {
