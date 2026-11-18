@@ -837,7 +837,7 @@ document.addEventListener('mouseup', (ev) => {
   }, 0);
 });
 window.addEventListener('hashchange', () => { if (!S.keepFocus) S.focus = null; S.keepFocus = false; render(); });
-if (/\.github\.io$/.test(location.hostname)) {
+if (/(\.github\.io|^getlake\.dev)$/.test(location.hostname)) {
   const s = document.createElement('script'); s.async = true; s.src = 'https://gc.zgo.at/count.js'; s.dataset.goatcounter = 'https://lakehq.goatcounter.com/count'; document.head.appendChild(s);
 }
 render();
