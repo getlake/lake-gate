@@ -1,6 +1,6 @@
 # lake-gate launch posts (ready to paste, DRAFTS: nothing has been posted)
 
-URLs already point to https://github.com/getlake/lake-gate and https://getlake.github.io/lake-gate. No founder name; the voice is "we" (the Lake team). These are drafts only; nothing has been posted.
+URLs already point to https://github.com/getlake/lake-gate and https://getlake.dev/lake-gate. No founder name; the voice is "we" (the Lake team). These are drafts only; nothing has been posted.
 
 ---
 
@@ -82,7 +82,7 @@ We open-sourced lake-gate: your coding agent waits for a real yes from a teammat
 
 4/ The GitHub check `lake/plan-approval` keeps unapproved plans out of main. Small, cheap plans can auto-approve (shadow mode first).
 
-5/ `npx lake-gate init`. Zero dependencies, no server, no telemetry, MIT. Looking for a few teams of 2–10 to try it: https://getlake.github.io/lake-gate
+5/ `npx lake-gate init`. Zero dependencies, no server, no telemetry, MIT. Looking for a few teams of 2–10 to try it: https://getlake.dev/lake-gate
 
 ---
 
@@ -92,7 +92,7 @@ Your coding agent should wait for a real yes.
 
 We just open-sourced lake-gate for teams that build with Claude Code, Cursor and Codex. The agent's plan goes into the repo with a cost estimate per step. Implementation is blocked until a teammate approves that exact version, and editing the plan resets the approval. A GitHub check keeps unapproved plans from merging.
 
-Free, MIT, no telemetry. We're looking for a few design-partner teams: https://getlake.github.io/lake-gate
+Free, MIT, no telemetry. We're looking for a few design-partner teams: https://getlake.dev/lake-gate
 
 ---
 

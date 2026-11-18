@@ -14,7 +14,7 @@ export const DEFAULT_CONFIG = {
     '^\\s*(npx\\s+(-y\\s+)?)?lake-gate(@\\S+)?\\s+(status|estimate|check|sync|plan|help)(\\s|$)',
   ],
   nativeReviews: true, // GitHub "Review changes → Approve / Request changes" counts for the plan version at the reviewed commit
-  reviewUrl: 'https://getlake.github.io/lake-gate/app/', // Lake review UI linked from the PR summary ("" to hide the buttons)
+  reviewUrl: 'https://getlake.dev/lake-gate/app/', // Lake review UI linked from the PR summary ("" to hide the buttons)
   checkButtons: false, // experimental: Approve / Request changes buttons on a GitHub check run (needs checks: write)
   autoApprove: { mode: 'on', maxUsd: 1.5, maxSteps: 3, maxComplexity: 'low', maxCodeLines: 150 }, // tiny plans with a small diff pass without a human. mode: "off" | "shadow" | "on"
   // Budget approval: above approverAbove (USD, upper estimate or the plan's "Budget cap") one of approvers

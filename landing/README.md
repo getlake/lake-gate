@@ -1,6 +1,6 @@
 # lake-gate landing page
 
-Hosted at https://getlake.github.io/lake-gate/ via GitHub Pages (the `pages` workflow publishes this folder).
+Hosted at https://getlake.dev/lake-gate/ via GitHub Pages (the `pages` workflow publishes this folder).
 
 - GitHub links point to https://github.com/getlake/lake-gate.
 - Visit counting uses the GoatCounter site code `lakehq`. The script never loads on localhost.
