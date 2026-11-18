@@ -189,7 +189,7 @@ test('PR check: native "Approve" counts for the version at the reviewed commit; 
   evr = await evaluatePr(ghc(f), 9);
   assert.equal(evr.state, 'failure', 'approval of an older plan version does not carry over');
   const md = renderSummary(evr);
-  assert.match(md, /getlake\.github\.io\/lake-gate\/app\/#\/pr\/acme\/app\/9\/retries\?do=approve&v=/);
+  assert.match(md, /getlake\.dev\/lake-gate\/app\/#\/pr\/acme\/app\/9\/retries\?do=approve&v=/);
   assert.match(md, /btn\/approve\.svg/);
   assert.match(md, /Review changes → Approve/);
   assert.match(md, /\/lake approve retries@/);
